@@ -73,3 +73,30 @@ def test_lookback_grows_up_to_horizon(scenario):
     first = tests[tests["stream"] == 0]["windows_seen"].to_numpy()
     assert first[:4].tolist() == [1, 2, 3, 3]
     assert not tests["rejected"].any()
+
+
+def test_summarize_delays_and_misses():
+    import pandas as pd
+
+    from driftfdr import MonitorResult
+
+    sc = make_scenario(
+        ScenarioConfig(n_streams=4, n_steps=1000, drift_fraction=0.5, fixed_onset=500), seed=1
+    )
+    d0, d1 = sc.drifting
+    null_stream = [k for k in range(4) if k not in (d0, d1)][0]
+    tests = pd.DataFrame(
+        {
+            "window": [0, 1, 2],
+            "t_end": [400, 700, 600],
+            "stream": [null_stream, d0, d1],
+            "rejected": [True, True, False],
+            "is_null": [True, False, False],
+        }
+    )
+    s = summarize(MonitorResult(tests, n_windows=7, scenario=sc, config=CONFIG))
+    assert s["alarms"] == 2 and s["false_alarms"] == 1 and s["fdp"] == 0.5
+    assert s["detected"] == 1 and s["mdr"] == 0.5
+    assert s["mean_delay"] == 200
+    # the missed drift keeps degrading until the end of the run
+    assert s["degraded_per_drift"] == (200 + 500) / 2
