@@ -121,15 +121,15 @@ def plot_scaling(agg: pd.DataFrame, rho: float):
     axes[0, 0].set_ylim(0, 1)
     axes[1, 0].axhline(ALPHA, color=TEXT_2, linewidth=1)
     axes[1, 0].set_ylim(0, 1)
+    fig.tight_layout(rect=(0, 0, 1, 0.89))
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=4, bbox_to_anchor=(0.5, 1.05))
+    fig.legend(handles, labels, loc="upper center", ncol=4, bbox_to_anchor=(0.5, 0.955))
     fig.suptitle(
         f"Масштабирование: Page-Hinkley, 10% потоков с дрейфом, φ = 0.5, ρ = {rho:g}, α = {ALPHA:g}",
-        y=1.1,
+        y=0.995,
         fontsize=12,
         fontweight="bold",
     )
-    fig.tight_layout()
     savefig(fig, f"exp2_scaling_rho{rho:g}.png")
 
 
@@ -157,6 +157,14 @@ def plot_dependence(agg: pd.DataFrame):
     ax.legend(loc="upper left")
     ax.set_title(f"Зависимость между потоками и FDR, K = {k}")
     savefig(fig, "exp2_dependence.png")
+
+
+def replot():
+    setup_style()
+    agg = pd.read_csv(RESULTS / "exp2_scaling.csv")
+    for rho in sorted(agg.rho.unique()):
+        plot_scaling(agg, rho)
+    plot_dependence(agg)
 
 
 def main():
