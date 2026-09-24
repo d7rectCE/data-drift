@@ -55,3 +55,16 @@ def test_bucket_means_and_tolerance():
     v = np.array([[1.0, 3.0, 5.0, 7.0]])
     assert bucket_means(v, np.array([0, 0, 2, 2]), 3).tolist() == [[2.0, 2.0, 6.0]]  # empty bucket 1 carried
     assert tolerance_from_cost(10.0, 200) == 0.05
+
+
+def test_split_common_removes_shared_component():
+    from driftfdr import split_common
+
+    rng = np.random.default_rng(14)
+    shared = rng.normal(size=1000)
+    x = shared + 0.3 * rng.normal(size=(50, 1000))
+    x[:5, 600:] += 2.0  # a drift in a minority of streams
+    resid, common = split_common(x, n_ref=300)
+    assert np.corrcoef(common, shared)[0, 1] > 0.95
+    assert resid[5:, :600].std() < 0.5 * x[5:, :600].std() / x[5:, :300].std()
+    assert resid[:5, 600:].mean() > 3.0  # the minority drift stays in the residuals

@@ -18,7 +18,7 @@ from .online_fdr import (
     Uncorrected,
     make_procedure,
 )
-from .preprocess import bucket_means, tolerance_from_cost
+from .preprocess import bucket_means, split_common, tolerance_from_cost
 from .streaming import CalibratedDetector, StreamingMonitor, from_river
 from .streams import Scenario, ScenarioConfig, SupervisedConfig, make_scenario, make_supervised_scenario
 
@@ -61,4 +61,5 @@ __all__ = [
     "summarize",
     "bucket_means",
     "tolerance_from_cost",
+    "split_common",
 ]

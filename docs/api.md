@@ -3,7 +3,7 @@
 Generated from the docstrings by `python docs/gen_api.py`; do not edit by hand.
 Everything listed under `driftfdr.__all__` can be imported from the top-level package.
 
-Top-level exports: `ADWIN`, `AlphaInvesting`, `BHWindow`, `BatchBH`, `BonferroniWindow`, `CalibratedDetector`, `CalibrationConfig`, `DDM`, `Detector`, `EBHWindow`, `KSSliding`, `KSWindow`, `LOND`, `LORDpp`, `MeanShift`, `MonitorConfig`, `MonitorResult`, `NullDistribution`, `PageHinkley`, `RawThreshold`, `SAFFRON`, `Scenario`, `ScenarioConfig`, `StoreyBHWindow`, `StreamingMonitor`, `SupervisedConfig`, `Uncorrected`, `bucket_means`, `calibrate`, `calibrate_many`, `default_detectors`, `from_river`, `make_procedure`, `make_scenario`, `make_supervised_scenario`, `run_monitor`, `summarize`, `tolerance_from_cost`.
+Top-level exports: `ADWIN`, `AlphaInvesting`, `BHWindow`, `BatchBH`, `BonferroniWindow`, `CalibratedDetector`, `CalibrationConfig`, `DDM`, `Detector`, `EBHWindow`, `KSSliding`, `KSWindow`, `LOND`, `LORDpp`, `MeanShift`, `MonitorConfig`, `MonitorResult`, `NullDistribution`, `PageHinkley`, `RawThreshold`, `SAFFRON`, `Scenario`, `ScenarioConfig`, `StoreyBHWindow`, `StreamingMonitor`, `SupervisedConfig`, `Uncorrected`, `bucket_means`, `calibrate`, `calibrate_many`, `default_detectors`, `from_river`, `make_procedure`, `make_scenario`, `make_supervised_scenario`, `run_monitor`, `split_common`, `summarize`, `tolerance_from_cost`.
 
 ## Contents
 
@@ -747,6 +747,22 @@ steps (until the next scheduled retraining, or the planning horizon); a
 retraining costs ``retrain_cost`` in the same loss units. Retraining pays off
 when ``delta * horizon > retrain_cost``, so the tolerance of the
 material-degradation null is ``retrain_cost / horizon``.
+
+### `split_common`
+
+```python
+split_common(values: np.ndarray, n_ref: int) -> tuple[np.ndarray, np.ndarray]
+```
+
+Split synchronous streams into a common component and model-specific residuals.
+
+Each stream is standardised by the mean and standard deviation of its first
+``n_ref`` steps; the common component is the cross-sectional median at every
+step, and a residual is a stream minus it. Fluctuations shared by all models
+(the source of bursts of false alarms, experiment 5) end up in the common
+component, which is monitored as one extra stream; a drift that hits a minority
+of models barely moves the median and stays in their residuals. Returns
+``(residuals of shape (n_streams, n_steps), common of shape (n_steps,))``.
 
 ## `driftfdr.bootstrap`
 

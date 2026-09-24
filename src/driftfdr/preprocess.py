@@ -42,3 +42,22 @@ def tolerance_from_cost(retrain_cost: float, horizon: float) -> float:
     if horizon <= 0:
         raise ValueError("horizon must be positive")
     return retrain_cost / horizon
+
+
+def split_common(values: np.ndarray, n_ref: int) -> tuple[np.ndarray, np.ndarray]:
+    """Split synchronous streams into a common component and model-specific residuals.
+
+    Each stream is standardised by the mean and standard deviation of its first
+    ``n_ref`` steps; the common component is the cross-sectional median at every
+    step, and a residual is a stream minus it. Fluctuations shared by all models
+    (the source of bursts of false alarms, experiment 5) end up in the common
+    component, which is monitored as one extra stream; a drift that hits a minority
+    of models barely moves the median and stays in their residuals. Returns
+    ``(residuals of shape (n_streams, n_steps), common of shape (n_steps,))``.
+    """
+    x = np.atleast_2d(np.asarray(values, dtype=float))
+    mu = x[:, :n_ref].mean(axis=1, keepdims=True)
+    sd = x[:, :n_ref].std(axis=1, keepdims=True)
+    z = (x - mu) / np.where(sd > 0, sd, 1.0)
+    common = np.median(z, axis=0)
+    return z - common, common
