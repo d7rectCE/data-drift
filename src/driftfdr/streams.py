@@ -4,6 +4,9 @@ Each stream stands for the monitored signal of one production model, e.g. its
 per-step loss. Streams are AR(1) in time and share a common factor, so both
 serial and cross-stream dependence are present. A fraction of the streams
 undergoes a single change in mean, abrupt or gradual, at a known time.
+Changes are either sporadic (each stream at its own time) or clustered into
+drift events that shift a whole group of streams at the same moment, as when
+an upstream data source changes for many models at once.
 
 Two views of the same latent process are exposed:
 
@@ -40,6 +43,9 @@ class ScenarioConfig:
     """Onsets are drawn uniformly from this fraction range of ``n_steps``."""
     fixed_onset: int | None = None
     """If set, every drifting stream changes at this step instead."""
+    drift_events: int = 0
+    """Number of drift events; each shifts ``event_fraction`` of the streams at once."""
+    event_fraction: float = 0.1
     base_error_rate: float = 0.2
 
 
@@ -53,6 +59,8 @@ class Scenario:
     change_end: np.ndarray
     """First index from which the mean stays at its final level."""
     drift_kind: np.ndarray
+    event: np.ndarray
+    """Drift event of each stream, -1 for sporadic changes and stable streams."""
 
     @property
     def n_streams(self) -> int:
@@ -111,24 +119,41 @@ def make_scenario(config: ScenarioConfig, seed: int = 0) -> Scenario:
     change_end = np.full(n, NO_CHANGE, dtype=np.int64)
     kind = np.full(n, "none", dtype=object)
 
-    n_drift = int(round(config.drift_fraction * n))
+    event = np.full(n, -1, dtype=np.int64)
     lo, hi = int(config.onset_range[0] * T), int(config.onset_range[1] * T)
+
+    def draw_onset():
+        return config.fixed_onset if config.fixed_onset is not None else int(rng.integers(lo, hi))
+
+    def apply_change(streams, tau):
+        for k in streams:
+            kind_k = config.drift_type
+            if kind_k == "mixed":
+                kind_k = str(rng.choice(["abrupt", "gradual"]))
+            if kind_k == "abrupt":
+                shift[k, tau:] = config.magnitude
+                end = tau
+            else:
+                L = config.gradual_length
+                ramp = np.minimum(1.0, (np.arange(tau, T) - tau + 1) / L)
+                shift[k, tau:] = config.magnitude * ramp
+                end = tau + L - 1
+            change_start[k], change_end[k], kind[k] = tau, end, kind_k
+
+    n_drift = int(round(config.drift_fraction * n))
     for k in rng.choice(n, size=n_drift, replace=False):
-        tau = config.fixed_onset if config.fixed_onset is not None else int(rng.integers(lo, hi))
-        kind_k = config.drift_type
-        if kind_k == "mixed":
-            kind_k = str(rng.choice(["abrupt", "gradual"]))
-        if kind_k == "abrupt":
-            shift[k, tau:] = config.magnitude
-            end = tau
-        else:
-            L = config.gradual_length
-            ramp = np.minimum(1.0, (np.arange(tau, T) - tau + 1) / L)
-            shift[k, tau:] = config.magnitude * ramp
-            end = tau + L - 1
-        change_start[k], change_end[k], kind[k] = tau, end, kind_k
+        apply_change([k], draw_onset())
+
+    n_per_event = int(round(config.event_fraction * n))
+    if config.drift_events * n_per_event > n - n_drift:
+        raise ValueError("not enough stable streams for the requested drift events")
+    for e in range(config.drift_events):
+        stable = np.flatnonzero(change_start == NO_CHANGE)
+        group = rng.choice(stable, size=n_per_event, replace=False)
+        apply_change(group, draw_onset())
+        event[group] = e
 
     latent = ar1_latent(n, T, config.phi, config.rho, rng)
     values = latent + shift
     errors = (values > stats.norm.isf(config.base_error_rate)).astype(np.int8)
-    return Scenario(config, values, errors, change_start, change_end, kind)
+    return Scenario(config, values, errors, change_start, change_end, kind, event)

@@ -105,7 +105,12 @@ PROCEDURE_LABELS = {
     "bonferroni": "Бонферрони в окне",
     "alpha-investing": "alpha-investing",
     "raw": "детектор river по умолчанию",
+    "storey_bh": "BH Стори в окне",
+    "BatchBH": "BatchBH",
 }
+# Stage 2 procedures reuse the slots of procedures that stage 2 figures do not show
+PROCEDURE_COLORS["storey_bh"] = PALETTE[3]
+PROCEDURE_COLORS["BatchBH"] = PALETTE[6]
 DETECTOR_ORDER = ["PH", "DDM", "ADWIN", "KS"]
 DETECTOR_COLORS = dict(zip(DETECTOR_ORDER, PALETTE))
 

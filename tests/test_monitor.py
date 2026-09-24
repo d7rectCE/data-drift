@@ -100,3 +100,20 @@ def test_summarize_delays_and_misses():
     assert s["mean_delay"] == 200
     # the missed drift keeps degrading until the end of the run
     assert s["degraded_per_drift"] == (200 + 500) / 2
+
+
+def test_drift_events_shift_groups_together():
+    sc = make_scenario(
+        ScenarioConfig(n_streams=50, n_steps=2000, drift_fraction=0.1, drift_events=2, event_fraction=0.2),
+        seed=2,
+    )
+    assert sc.drifting.size == 5 + 2 * 10
+    for e in (0, 1):
+        members = np.flatnonzero(sc.event == e)
+        assert members.size == 10
+        assert np.unique(sc.change_start[members]).size == 1
+
+
+def test_window_fdp_is_reported(scenario):
+    s = summarize(run_monitor(scenario, PageHinkley(), Uncorrected(0.2), CONFIG))
+    assert 0 <= s["window_fdp"] <= s["p_any_false_alarm_per_window"]

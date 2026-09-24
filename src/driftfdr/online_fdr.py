@@ -1,13 +1,16 @@
 """Decision rules applied to the p-values of one monitoring window.
 
 Every window produces a batch of p-values, one per actively monitored stream.
-Batch rules (``Uncorrected``, ``BonferroniWindow``, ``BHWindow``) decide on the
-batch as a whole. Online rules (``LOND``, ``LORDpp``, ``SAFFRON``,
-``AlphaInvesting``) see hypotheses one at a time; within a batch they are fed
-in a random order that does not depend on the p-values.
+Per-window rules (``Uncorrected``, ``BonferroniWindow``, ``BHWindow``,
+``StoreyBHWindow``) decide on each batch on its own. ``BatchBH`` runs BH inside
+each batch at levels chosen to control FDR over all batches. Online rules
+(``LOND``, ``LORDpp``, ``SAFFRON``, ``AlphaInvesting``) see hypotheses one at a
+time; within a batch they are fed in a random order that does not depend on
+the p-values.
 
-References: Foster & Stine (2008), Javanmard & Montanari (2018),
-Ramdas et al. (2017, LORD++), Ramdas et al. (2018, SAFFRON).
+References: Foster & Stine (2008), Storey, Taylor & Siegmund (2004),
+Javanmard & Montanari (2018), Ramdas et al. (2017, LORD++), Ramdas et al.
+(2018, SAFFRON), Zrnic, Jiang, Ramdas & Jordan (2020, BatchBH).
 """
 
 from __future__ import annotations
@@ -89,16 +92,81 @@ class BHWindow(Procedure):
         return benjamini_hochberg(values, self.alpha)
 
 
+class StoreyBHWindow(Procedure):
+    """Adaptive BH within each window: BH at ``alpha / pi0_hat``.
+
+    ``pi0_hat = (1 + #{p > lam}) / (m (1 - lam))`` is the finite-sample Storey
+    estimate of the fraction of nulls; when many streams drift at once it drops
+    and the threshold rises.
+    """
+
+    name = "storey_bh"
+
+    def __init__(self, alpha: float = 0.05, lam: float = 0.5):
+        super().__init__(alpha)
+        self.lam = lam
+
+    def decide(self, values, rng):
+        p = np.asarray(values, dtype=float)
+        if p.size == 0:
+            return np.zeros(0, dtype=bool)
+        # not capped at one: the Storey–Taylor–Siegmund guarantee is for the uncapped estimate
+        pi0 = (1 + np.sum(p > self.lam)) / (p.size * (1 - self.lam))
+        return benjamini_hochberg(p, self.alpha / pi0) & (p <= self.lam)
+
+
+class BatchBH(Procedure):
+    """BH inside each window at levels that control FDR across all windows.
+
+    With ``R_s`` rejections and ``R_s^+`` the rejections BH would make in batch
+    ``s`` if one of its p-values were set to zero, the level of batch ``t`` is
+
+        (alpha * sum_{s<=t} gamma_s - sum_{s<t} alpha_s R_s^+ / (R_s^+ + sum_{r<s} R_r))
+        * (n_t + sum_{r<t} R_r) / n_t,
+
+    which keeps ``sum_s alpha_s R_s^+ / (R_s^+ + sum_{r<s} R_r) <= alpha``, the
+    bound on FDR for independent p-values. Past rejections both refund budget
+    and scale the level up.
+    """
+
+    name = "BatchBH"
+
+    def __init__(self, alpha: float = 0.05):
+        super().__init__(alpha)
+        self.t = 0
+        self.charged = 0.0
+        self.n_rejections = 0
+        self.levels: list[float] = []
+
+    def decide(self, values, rng):
+        p = np.asarray(values, dtype=float)
+        n = p.size
+        if n == 0:
+            return np.zeros(0, dtype=bool)
+        self.t += 1
+        budget = self.alpha * gamma_saffron(np.arange(1, self.t + 1)).sum()
+        level = min(1.0, max(0.0, budget - self.charged) * (n + self.n_rejections) / n)
+        self.levels.append(level)
+        rejected = benjamini_hochberg(p, level)
+        r_plus = bh_count(np.concatenate([[0.0], np.sort(p)[:-1]]), level)
+        self.charged += level * r_plus / (r_plus + self.n_rejections)
+        self.n_rejections += int(rejected.sum())
+        return rejected
+
+
+def bh_count(p: np.ndarray, alpha: float) -> int:
+    """Number of BH rejections at level ``alpha``."""
+    m = p.size
+    below = np.flatnonzero(np.sort(p) <= alpha * np.arange(1, m + 1) / m)
+    return int(below[-1] + 1) if below.size else 0
+
+
 def benjamini_hochberg(p: np.ndarray, alpha: float) -> np.ndarray:
     p = np.asarray(p, dtype=float)
-    m = p.size
-    if m == 0:
-        return np.zeros(0, dtype=bool)
-    sorted_p = np.sort(p)
-    below = np.flatnonzero(sorted_p <= alpha * np.arange(1, m + 1) / m)
-    if below.size == 0:
-        return np.zeros(m, dtype=bool)
-    return p <= sorted_p[below[-1]]
+    k = bh_count(p, alpha)
+    if k == 0:
+        return np.zeros(p.size, dtype=bool)
+    return p <= np.sort(p)[k - 1]
 
 
 class OnlineProcedure(Procedure):
@@ -227,7 +295,17 @@ class AlphaInvesting(OnlineProcedure):
 
 PROCEDURES = {
     cls.name: cls
-    for cls in (Uncorrected, BonferroniWindow, BHWindow, LOND, LORDpp, SAFFRON, AlphaInvesting)
+    for cls in (
+        Uncorrected,
+        BonferroniWindow,
+        BHWindow,
+        StoreyBHWindow,
+        BatchBH,
+        LOND,
+        LORDpp,
+        SAFFRON,
+        AlphaInvesting,
+    )
 }
 
 

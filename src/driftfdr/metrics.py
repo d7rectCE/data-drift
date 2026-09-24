@@ -1,7 +1,9 @@
 """Evaluation of a monitoring run against the known change points.
 
-Error side: FDP (false alarms / alarms), false alarms per window, probability
-of at least one false alarm in a window, and MTFA in stream-steps.
+Error side: FDP (false alarms / alarms over the whole run), the per-window
+FDP averaged over windows (what a per-window BH controls), false alarms per
+window, probability of at least one false alarm in a window, and MTFA in
+stream-steps.
 Detection side: for every drifting stream the delay is the time from the onset
 to the end of the first window whose test alarms; a drift that is never
 caught counts as missed (MDR) and keeps degrading the model until the end of
@@ -25,6 +27,8 @@ def summarize(result: MonitorResult) -> dict:
     n_alarms = int(rejected.sum())
     n_false = int((rejected & null).sum())
     fa_windows = tests.loc[rejected & null, "window"].nunique()
+    per_window = tests.assign(v=rejected & null).groupby("window")[["v", "rejected"]].sum()
+    window_fdp = (per_window["v"] / per_window["rejected"].clip(lower=1)).sum() / result.n_windows
     monitored_steps = n_streams * (n_steps - result.config.n_ref)
 
     alarms = tests.loc[rejected, ["stream", "t_end"]]
@@ -48,6 +52,7 @@ def summarize(result: MonitorResult) -> dict:
         "false_alarms": n_false,
         "true_alarms": n_alarms - n_false,
         "fdp": n_false / max(n_alarms, 1),
+        "window_fdp": float(window_fdp),
         "far_per_test": n_false / max(int(null.sum()), 1),
         "false_alarms_per_window": n_false / result.n_windows,
         "p_any_false_alarm_per_window": fa_windows / result.n_windows,
