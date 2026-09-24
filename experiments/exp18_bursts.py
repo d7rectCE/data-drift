@@ -8,7 +8,7 @@ common component is tested as one extra stream; if it alarms, the whole fleet
 is flagged. Compared with testing the raw streams directly, on K = 200 AR(1)
 streams (phi = 0.5, rho in {0.3, 0.6}) with no drift, a drift event hitting
 20% of the models, or a drift hitting all of them. Page-Hinkley, Bonferroni
-within each window, alpha = 0.05.
+or BH within each window, alpha = 0.05.
 
 Usage: python experiments/exp18_bursts.py [--quick]
 """
@@ -77,25 +77,25 @@ def model_metrics(t: pd.DataFrame, sc: Scenario, fleet_times: np.ndarray, n_wind
 
 
 def task(args):
-    scen, rho, seed, n = args
+    scen, rho, seed, n, rule = args
     sc = make_scenario(ScenarioConfig(n_streams=n, n_steps=5000, phi=0.5, rho=rho, magnitude=1.0, **SCENARIOS[scen]),
                        seed=seed)
     det = PageHinkley()
     rows = []
-    res = run_monitor(sc, det, make_procedure("bonferroni", 0.05), CFG, seed=seed)
+    res = run_monitor(sc, det, make_procedure(rule, 0.05), CFG, seed=seed)
     rows.append({"method": "сырые ряды", **model_metrics(res.tests, sc, np.array([]), res.n_windows),
                  "fleet_true": 0, "fleet_false": 0})
     resid, common = split_common(sc.values, N_REF)
     aug = augmented(sc, resid, common)
     for label, with_fleet in (("остатки", False), ("остатки + тест парка", True)):
         view = aug if with_fleet else replace(sc, values=resid)
-        r = run_monitor(view, det, make_procedure("bonferroni", 0.05), CFG, seed=seed)
+        r = run_monitor(view, det, make_procedure(rule, 0.05), CFG, seed=seed)
         t = r.tests
         fleet = t[(t.stream == n) & t.rejected] if with_fleet else t.iloc[:0]
         models = t[t.stream < n]
         rows.append({"method": label, **model_metrics(models, sc, fleet.t_end.to_numpy(), r.n_windows),
                      "fleet_true": int((~fleet.is_null).sum()), "fleet_false": int(fleet.is_null.sum())})
-    return [{"scenario": scen, "rho": rho, "seed": seed, **row} for row in rows]
+    return [{"rule": rule, "scenario": scen, "rho": rho, "seed": seed, **row} for row in rows]
 
 
 def main():
@@ -103,13 +103,15 @@ def main():
     parser.add_argument("--quick", action="store_true")
     args = parser.parse_args()
     n, seeds = (60, 2) if args.quick else (200, 10)
-    raw = run_parallel(task, [(sc, rho, s, n) for sc in SCENARIOS for rho in (0.3, 0.6) for s in range(seeds)])
+    tasks = [(sc, rho, s, n, rule) for rule in ("bonferroni", "bh_window") for sc in SCENARIOS
+             for rho in (0.3, 0.6) for s in range(seeds)]
+    raw = run_parallel(task, tasks)
     raw.to_csv(RESULTS / "exp18_runs.csv", index=False)
     cols = ["false_alarms", "fdp", "p_any_false_alarm_per_window", "max_burst", "degraded_per_drift", "fleet_true", "fleet_false"]
-    agg = raw.groupby(["scenario", "rho", "method"], sort=False)[cols].mean().reset_index()
+    agg = raw.groupby(["rule", "scenario", "rho", "method"], sort=False)[cols].mean().reset_index()
     agg.to_csv(RESULTS / "exp18_bursts.csv", index=False)
     with open(RESULTS / "exp18_tables.md", "w") as f:
-        f.write(f"## Пачки ложных тревог против массового дрейфа, K = {n}, Page-Hinkley, Бонферрони\n\n")
+        f.write(f"## Пачки ложных тревог против массового дрейфа, K = {n}, Page-Hinkley, Бонферрони и BH в окне\n\n")
         f.write("`max_burst` — наибольшее число ложных тревог моделей в одном окне; `fleet_true` / `fleet_false` — "
                 "верные и ложные тревоги теста общего компонента (событие по всему парку).\n\n" + markdown_table(agg) + "\n")
     print(agg.round(3).to_string(index=False))
