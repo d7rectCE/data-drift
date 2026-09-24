@@ -78,7 +78,12 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 - При задержке меток передавайте ошибку модели тогда, когда пришла метка.
 - Детектор можно взять из river с его настройками:
   `detector_factory=lambda: from_river(drift.PageHinkley(mode="up"))`.
-- Полный пример — `examples/streaming_demo.py`.
+- Полный пример — `examples/streaming_demo.py`. Наглядная демонстрация — `examples/live_demo.py`:
+  40 связанных моделей, общий всплеск и событие во всём парке; river по умолчанию делает 293
+  переобучения (248 впустую), driftfdr — 10 (1 впустую) и одну тревогу парка. Результат —
+  [results/demo.html](results/demo.html), открывается в браузере с проигрыванием по шагам.
+
+![Демонстрация](results/figures/demo.png)
 
 ## Рекомендуемая конфигурация
 
