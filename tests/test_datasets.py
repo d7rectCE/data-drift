@@ -67,4 +67,4 @@ def test_split_common_removes_shared_component():
     resid, common = split_common(x, n_ref=300)
     assert np.corrcoef(common, shared)[0, 1] > 0.95
     assert resid[5:, :600].std() < 0.5 * x[5:, :600].std() / x[5:, :300].std()
-    assert resid[:5, 600:].mean() > 3.0  # the minority drift stays in the residuals
+    assert resid[:5, 600:].mean() > 1.5  # the 2.0 shift (about 1.9 reference sd) stays in the residuals
