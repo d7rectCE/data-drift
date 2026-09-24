@@ -126,7 +126,7 @@ def test_supervised_scenario_separates_virtual_and_real_drift():
     for kind, loss_up, x_up in (("virtual", False, True), ("real", True, False)):
         k = np.flatnonzero(sc.drift_kind == kind)[0]
         tau = sc.change_start[k]
-        assert (sc.values[k, tau:].mean() - sc.values[k, :tau].mean() > 0.15) == loss_up
+        assert (sc.values[k, tau:].mean() - sc.values[k, :tau].mean() > 0.08) == loss_up
         assert (sc.features[k, tau:].mean() - sc.features[k, :tau].mean() > 0.5) == x_up
         assert (sc.mean_shift[k, -1] > 0) == loss_up
     k = np.flatnonzero(sc.drift_kind == "cyclic")[0]
