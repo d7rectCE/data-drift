@@ -16,6 +16,7 @@ what it does.
 
 from __future__ import annotations
 
+import warnings
 from collections import deque
 
 import numpy as np
@@ -79,6 +80,13 @@ class CalibratedDetector:
 class StreamingMonitor:
     """One calibrated detector per model plus a rule that decides which models to retrain.
 
+    The default rule is Bonferroni within each window, which keeps the share of false
+    retrains near alpha however strongly the models' errors are correlated
+    (experiment 13); ``"bh_window"`` reacts faster when many models drift at once
+    (experiment 4) but loses control under strong correlation. Monitor the model's
+    error, not its input features: feature detectors alarm on drift that does not
+    hurt the model and miss drift that does (experiment 11).
+
     ``update`` takes the current observation of every model and returns the
     indices of models that alarmed at this step (empty between window ends).
     Alarmed models are reset automatically.
@@ -88,7 +96,7 @@ class StreamingMonitor:
         self,
         n_models: int,
         detector_factory,
-        procedure: Procedure | str = "bh_window",
+        procedure: Procedure | str = "bonferroni",
         alpha: float = 0.05,
         n_ref: int = 300,
         window: int = 100,
@@ -99,6 +107,13 @@ class StreamingMonitor:
         if n_ref % window:
             raise ValueError("n_ref must be a multiple of window")
         self.procedure = make_procedure(procedure, alpha) if isinstance(procedure, str) else procedure
+        if isinstance(detector_factory(), ADWIN) and n_models > 1:
+            warnings.warn(
+                "ADWIN's calibrated p-values are about three times too small at the per-model "
+                "levels a multiplicity correction uses (experiment 10); prefer MeanShift, "
+                "PageHinkley or KSWindow when the false-alarm rate must hold.",
+                stacklevel=2,
+            )
         self.rng = np.random.default_rng(seed)
         self.calibration = calibration
         self.t = 0

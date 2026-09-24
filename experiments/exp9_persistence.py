@@ -30,7 +30,7 @@ def task(args):
     base = insects_scenario(n_models=n_models, seed=seed) if data == "insects" else elec2_scenario(
         n_models=n_models, drift_fraction=0.2, flip=0.5, seed=seed)
     sc = error_rate_view(base, DELTA)
-    cfg = MonitorConfig(calibration=CalibrationConfig(method="moving", tolerance=DELTA))
+    cfg = MonitorConfig(calibration=CalibrationConfig(n_boot=500, tail="exponential", method="moving", tolerance=DELTA))
     rows = []
     for det_name, factory in DETECTORS.items():
         cache = {}

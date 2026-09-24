@@ -49,7 +49,7 @@ def task(args):
                                       magnitude=magnitude, fixed_onset=onset), seed=1500)
     det = DETECTORS[name]()
     method = "moving" if det.input_kind == "errors" else "sieve_pu"
-    t = run_monitor(sc, det, None, MonitorConfig(calibration=CalibrationConfig(method=method))).tests
+    t = run_monitor(sc, det, None, MonitorConfig(calibration=CalibrationConfig(n_boot=500, tail="exponential", method=method))).tests
     cal = t.pvalue <= 0.05
     row = {"detector": name, "magnitude": magnitude, "far": float(cal[t.is_null].mean())}
     for lag in (1, 3):

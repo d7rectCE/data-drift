@@ -55,7 +55,7 @@ def oc_task(args):
                        magnitude_range=(0.0, 1.0), fixed_onset=onset),
         seed=900 + seed,
     )
-    cfg = MonitorConfig(calibration=CalibrationConfig(method="sieve", tolerance=tol))
+    cfg = MonitorConfig(calibration=CalibrationConfig(n_boot=500, tail="exponential", method="sieve", tolerance=tol))
     t = run_monitor(sc, make_detector("PH"), None, cfg).tests
     post = t[t.t_end >= onset + 500]  # horizon of 5 windows entirely after the shift
     size = sc.mean_shift[post.stream, post.t_end - 1]
@@ -68,7 +68,7 @@ def real_task(args):
     base = insects_scenario(n_models=n_models, seed=seed) if data == "insects" else elec2_scenario(
         n_models=n_models, drift_fraction=0.2, flip=0.5, seed=seed)
     sc = error_rate_view(base, ERROR_TOL)
-    cfg = MonitorConfig(calibration=CalibrationConfig(method="moving", tolerance=tol))
+    cfg = MonitorConfig(calibration=CalibrationConfig(n_boot=500, tail="exponential", method="moving", tolerance=tol))
     det = make_detector("PH")
     cache, rows = {}, []
     for name in PROCEDURES:

@@ -58,7 +58,7 @@ def monitor_config(method: str, n_boot: int = 500, horizon: int = HORIZON) -> Mo
         n_ref=N_REF,
         window=WINDOW,
         horizon=horizon,
-        calibration=CalibrationConfig(n_boot=n_boot, method=method),
+        calibration=CalibrationConfig(n_boot=n_boot, method=method, tail="exponential"),
     )
 
 

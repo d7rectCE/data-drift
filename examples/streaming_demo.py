@@ -10,9 +10,9 @@ scenario = make_scenario(ScenarioConfig(n_streams=50, n_steps=4000, drift_fracti
 monitor = StreamingMonitor(
     n_models=50,
     detector_factory=lambda: from_river(drift.PageHinkley(mode="up")),
-    procedure="bh_window",  # or "bonferroni", "LORD++", ...
+    procedure="bonferroni",  # or "bh_window" when many models tend to drift at once
     alpha=0.05,
-    calibration=CalibrationConfig(n_boot=500, method="sieve"),
+    calibration=CalibrationConfig(n_boot=500),  # default is 2000 replicates
 )
 
 for t in range(scenario.n_steps):

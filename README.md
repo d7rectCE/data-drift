@@ -654,7 +654,7 @@ from driftfdr import StreamingMonitor, from_river
 monitor = StreamingMonitor(
     n_models=50,
     detector_factory=lambda: from_river(drift.PageHinkley(mode="up")),
-    procedure="bh_window",   # BH в окне: лучший выбор при кластерных дрейфах (эксп. 4)
+    procedure="bonferroni",  # по умолчанию; "bh_window" быстрее при массовых дрейфах (эксп. 4, 13)
     alpha=0.05,
 )
 for losses in stream_of_loss_vectors:          # по одному значению на модель

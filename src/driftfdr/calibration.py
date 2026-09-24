@@ -32,10 +32,16 @@ P_FLOOR = 1e-16
 
 @dataclass(frozen=True)
 class CalibrationConfig:
-    n_boot: int = 500
-    method: str = "moving"
+    """Defaults follow the experiments: AR-sieve with parameter uncertainty (moving
+    blocks are used automatically for 0/1 signals), 2000 replicates and a GPD tail,
+    which bring the per-window FWER of Bonferroni to its nominal level for
+    Page-Hinkley and KS (experiment 10). Experiments 1-9 and 11-15 pin the earlier
+    defaults (500 replicates, exponential tail) explicitly."""
+
+    n_boot: int = 2000
+    method: str = "sieve_pu"
     block_length: int | str = "auto"
-    tail: str = "exponential"
+    tail: str = "gpd"
     """Tail model for small p-values: ``exponential``, ``gpd`` or ``none``."""
     tail_fraction: float = 0.1
     min_exceedances: int = 10

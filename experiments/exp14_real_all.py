@@ -34,7 +34,7 @@ RULES = [("PH", "raw"), ("PH", "uncorrected"), ("PH", "bonferroni"), ("PH", "bh_
 def task(args):
     data, seed, n = args
     sc = error_rate_view(LOADERS[data](n, seed), DELTA)
-    cfg = MonitorConfig(calibration=CalibrationConfig(method="moving", tolerance=DELTA))
+    cfg = MonitorConfig(calibration=CalibrationConfig(n_boot=500, tail="exponential", method="moving", tolerance=DELTA))
     caches = {"PH": {}, "MeanShift(3)": {}}
     rows = []
     for det_name, rule in RULES:

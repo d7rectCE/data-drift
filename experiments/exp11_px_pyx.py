@@ -54,7 +54,7 @@ def task(args):
     for name, (signal, factory) in DETECTORS.items():
         view = replace(sc, values=sc.features) if signal == "features" else sc
         method = "moving" if signal == "errors" else "sieve"
-        cfg = MonitorConfig(calibration=CalibrationConfig(method=method))
+        cfg = MonitorConfig(calibration=CalibrationConfig(n_boot=500, tail="exponential", method=method))
         t = run_monitor(view, factory(), make_procedure("bonferroni", 0.05), cfg, seed=seed).tests
         alarms = t[t.rejected]
         for kind in ("none",) + KINDS:
