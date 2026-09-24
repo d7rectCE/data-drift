@@ -3,7 +3,7 @@
 Generated from the docstrings by `python docs/gen_api.py`; do not edit by hand.
 Everything listed under `driftfdr.__all__` can be imported from the top-level package.
 
-Top-level exports: `ADWIN`, `AlphaInvesting`, `BHWindow`, `BatchBH`, `BonferroniWindow`, `CalibratedDetector`, `CalibrationConfig`, `DDM`, `Detector`, `EBHWindow`, `KSSliding`, `KSWindow`, `LOND`, `LORDpp`, `MeanShift`, `MonitorConfig`, `MonitorResult`, `NullDistribution`, `PageHinkley`, `RawThreshold`, `SAFFRON`, `Scenario`, `ScenarioConfig`, `StoreyBHWindow`, `StreamingMonitor`, `SupervisedConfig`, `Uncorrected`, `bucket_means`, `calibrate`, `calibrate_many`, `default_detectors`, `from_river`, `make_procedure`, `make_scenario`, `make_supervised_scenario`, `run_monitor`, `split_common`, `summarize`, `tolerance_from_cost`.
+Top-level exports: `ADWIN`, `AlphaInvesting`, `BHWindow`, `BatchBH`, `BonferroniWindow`, `CalibratedDetector`, `CalibrationConfig`, `DDM`, `Detector`, `EBHWindow`, `KSSliding`, `KSWindow`, `LOND`, `LORDpp`, `MeanShift`, `MonitorConfig`, `MonitorResult`, `NullDistribution`, `PageHinkley`, `RawThreshold`, `SAFFRON`, `Scenario`, `ScenarioConfig`, `StoreyBHWindow`, `StreamingMonitor`, `SupervisedConfig`, `Uncorrected`, `benchmark_suite`, `bucket_means`, `calibrate`, `calibrate_many`, `default_detectors`, `from_river`, `make_procedure`, `make_scenario`, `make_supervised_scenario`, `run_monitor`, `split_common`, `summarize`, `tolerance_from_cost`.
 
 ## Contents
 
@@ -1050,6 +1050,20 @@ make_scenario(config: ScenarioConfig, seed: int = 0) -> Scenario
 ```
 
 Generate a synthetic scenario; the same config and seed always give the same data.
+
+### `benchmark_suite`
+
+```python
+benchmark_suite(n_streams: int = 100, n_steps: int = 5000, seeds_per_case: int = 4) -> list[tuple[str, ScenarioConfig, int]]
+```
+
+The fixed synthetic benchmark: 25 cases x 4 seeds = 100 scenarios, as ``(case, config, seed)``.
+
+Cases: drift type (abrupt, or gradual over 500 steps) x size (0.5 or 1 standard
+deviation) x correlation between models (rho = 0, 0.3, 0.6) x pattern (10% of the
+models drift at scattered times, or two events each shifting 5% of the models at
+once), plus one case without drift (rho = 0.3). AR(1) streams with phi = 0.5.
+Seeds are fixed, so every run of the suite sees the same 100 scenarios.
 
 ### `SupervisedConfig`
 

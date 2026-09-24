@@ -230,6 +230,31 @@ def make_scenario(config: ScenarioConfig, seed: int = 0) -> Scenario:
     return Scenario(config, values, errors, change_start, change_end, kind, event, mean_shift=shift)
 
 
+def benchmark_suite(n_streams: int = 100, n_steps: int = 5000, seeds_per_case: int = 4) -> list[tuple[str, ScenarioConfig, int]]:
+    """The fixed synthetic benchmark: 25 cases x 4 seeds = 100 scenarios, as ``(case, config, seed)``.
+
+    Cases: drift type (abrupt, or gradual over 500 steps) x size (0.5 or 1 standard
+    deviation) x correlation between models (rho = 0, 0.3, 0.6) x pattern (10% of the
+    models drift at scattered times, or two events each shifting 5% of the models at
+    once), plus one case without drift (rho = 0.3). AR(1) streams with phi = 0.5.
+    Seeds are fixed, so every run of the suite sees the same 100 scenarios.
+    """
+    cases = []
+    for kind in ("abrupt", "gradual"):
+        for magnitude in (0.5, 1.0):
+            for rho in (0.0, 0.3, 0.6):
+                for pattern, extra in (("scattered", dict(drift_fraction=0.1)),
+                                       ("clustered", dict(drift_fraction=0.0, drift_events=2, event_fraction=0.05))):
+                    name = f"{kind}, Δ={magnitude:g}, ρ={rho:g}, {pattern}"
+                    cases.append((name, ScenarioConfig(n_streams=n_streams, n_steps=n_steps, phi=0.5, rho=rho,
+                                                       drift_type=kind, magnitude=magnitude, gradual_length=500,
+                                                       **extra)))
+    cases.append(("no drift, ρ=0.3", ScenarioConfig(n_streams=n_streams, n_steps=n_steps, phi=0.5, rho=0.3,
+                                                    drift_fraction=0.0)))
+    return [(name, cfg, 1000 + i * seeds_per_case + s)
+            for i, (name, cfg) in enumerate(cases) for s in range(seeds_per_case)]
+
+
 SUPERVISED_KINDS = ("virtual", "real", "both", "cyclic")
 
 

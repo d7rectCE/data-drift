@@ -20,7 +20,7 @@ from .online_fdr import (
 )
 from .preprocess import bucket_means, split_common, tolerance_from_cost
 from .streaming import CalibratedDetector, StreamingMonitor, from_river
-from .streams import Scenario, ScenarioConfig, SupervisedConfig, make_scenario, make_supervised_scenario
+from .streams import Scenario, ScenarioConfig, SupervisedConfig, benchmark_suite, make_scenario, make_supervised_scenario
 
 __all__ = [
     "ADWIN",
@@ -59,6 +59,7 @@ __all__ = [
     "make_supervised_scenario",
     "run_monitor",
     "summarize",
+    "benchmark_suite",
     "bucket_means",
     "tolerance_from_cost",
     "split_common",
