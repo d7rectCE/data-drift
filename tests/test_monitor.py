@@ -100,6 +100,10 @@ def test_summarize_delays_and_misses():
     assert s["mean_delay"] == 200
     # the missed drift keeps degrading until the end of the run
     assert s["degraded_per_drift"] == (200 + 500) / 2
+    # event level: one of two alarms is a detection, one of two drifts is detected
+    assert s["precision"] == 0.5 and s["recall"] == 0.5 and s["f1"] == 0.5
+    late = summarize(MonitorResult(tests, n_windows=7, scenario=sc, config=CONFIG), max_delay=100)
+    assert late["precision"] == 0 and late["recall"] == 0 and late["f1"] == 0
 
 
 def test_drift_events_shift_groups_together():

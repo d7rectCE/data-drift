@@ -924,14 +924,23 @@ to the end of the first window whose test alarms; a drift that is never
 caught counts as missed (MDR) and keeps degrading the model until the end of
 the run. ``degraded_per_drift`` averages this censored delay over all drifts,
 so it penalises both slow detection and misses.
+Event-level precision, recall and F1 as in detector benchmarks (Cerqueira et
+al., 2026): an alarm is a true detection if it is the first alarm after a
+change (within ``max_delay`` steps, if given, and before the next change);
+every other alarm, including repeated alarms for a change already caught, is
+a false detection. Unlike ``fdp``, this does not use the null hypothesis of
+the tests, so it is comparable with published benchmarks.
 
 ### `summarize`
 
 ```python
-summarize(result: MonitorResult) -> dict
+summarize(result: MonitorResult, max_delay: int | None = None) -> dict
 ```
 
 Error and detection metrics of one monitoring run, as a flat dict (see the module docstring).
+
+``max_delay`` only affects the event-level ``precision``, ``recall`` and ``f1``: a
+detection later than this many steps after the change does not count.
 
 ## `driftfdr.streams`
 

@@ -11,6 +11,12 @@ to the end of the first window whose test alarms; a drift that is never
 caught counts as missed (MDR) and keeps degrading the model until the end of
 the run. ``degraded_per_drift`` averages this censored delay over all drifts,
 so it penalises both slow detection and misses.
+Event-level precision, recall and F1 as in detector benchmarks (Cerqueira et
+al., 2026): an alarm is a true detection if it is the first alarm after a
+change (within ``max_delay`` steps, if given, and before the next change);
+every other alarm, including repeated alarms for a change already caught, is
+a false detection. Unlike ``fdp``, this does not use the null hypothesis of
+the tests, so it is comparable with published benchmarks.
 """
 
 from __future__ import annotations
@@ -21,8 +27,12 @@ from .monitor import MonitorResult
 from .streams import NO_CHANGE
 
 
-def summarize(result: MonitorResult) -> dict:
-    """Error and detection metrics of one monitoring run, as a flat dict (see the module docstring)."""
+def summarize(result: MonitorResult, max_delay: int | None = None) -> dict:
+    """Error and detection metrics of one monitoring run, as a flat dict (see the module docstring).
+
+    ``max_delay`` only affects the event-level ``precision``, ``recall`` and ``f1``: a
+    detection later than this many steps after the change does not count.
+    """
     tests = result.tests
     scenario = result.scenario
     n_streams, n_steps = scenario.n_streams, scenario.n_steps
@@ -39,6 +49,7 @@ def summarize(result: MonitorResult) -> dict:
     alarm_times = {k: np.sort(g.to_numpy()) for k, g in alarms.groupby("stream")["t_end"]}
     cs, _ = scenario.changes()
     delays, degraded = [], []
+    event_hits = 0
     for k in scenario.drifting:
         onsets = np.sort(cs[k][cs[k] < NO_CHANGE])
         times = alarm_times.get(k, np.array([], dtype=int))
@@ -49,9 +60,12 @@ def summarize(result: MonitorResult) -> dict:
             if hit.size:
                 delays.append(hit[0] - onset)
                 degraded.append(hit[0] - onset)
+                event_hits += max_delay is None or hit[0] - onset <= max_delay
             else:
                 degraded.append(until - onset)
     n_drifts = len(degraded)
+    precision = event_hits / n_alarms if n_alarms else np.nan
+    recall = event_hits / n_drifts if n_drifts else np.nan
 
     return {
         "n_tests": len(tests),
@@ -73,6 +87,9 @@ def summarize(result: MonitorResult) -> dict:
         "mean_delay": float(np.mean(delays)) if delays else np.nan,
         "median_delay": float(np.median(delays)) if delays else np.nan,
         "degraded_per_drift": float(np.mean(degraded)) if degraded else np.nan,
+        "precision": precision,
+        "recall": recall,
+        "f1": np.nan if not n_drifts else 2 * precision * recall / (precision + recall) if event_hits else 0.0,
         # mean time ratio of Bifet et al. (2013): MTFA / MTD * (1 - MDR), higher is better
         "mtr": (monitored_steps / n_false if n_false else np.inf) / np.mean(delays) * (len(delays) / n_drifts)
         if delays and n_drifts
