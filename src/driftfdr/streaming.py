@@ -16,8 +16,11 @@ what it does.
 
 from __future__ import annotations
 
+import json
 import warnings
+import zlib
 from collections import deque
+from dataclasses import asdict
 
 import numpy as np
 
@@ -87,15 +90,22 @@ class StreamingMonitor:
     error, not its input features: feature detectors alarm on drift that does not
     hurt the model and miss drift that does (experiment 11).
 
-    ``update`` takes the current observation of every model and returns the
-    indices of models that alarmed at this step (empty between window ends).
-    Alarmed models are reset automatically.
+    ``update`` takes the new observations, either a sequence with one value per model
+    (models ``0..n-1``) or a mapping ``{model_id: value}`` for any subset of models,
+    and returns the models that alarmed (indices or ids respectively). Each model keeps
+    its own clock: its windows end after its own observations, so models that report
+    irregularly or skip steps are fine, and p-values that become ready in the same
+    call are corrected together. Alarmed models are reset and collect a new reference.
+    With delayed labels, pass a model's error when its label arrives.
+
+    Models can be added and removed at any time, and the whole state saved to and
+    restored from a file (``save`` / ``load``).
     """
 
     def __init__(
         self,
-        n_models: int,
-        detector_factory,
+        n_models: int | None = None,
+        detector_factory=None,
         procedure: Procedure | str = "bonferroni",
         alpha: float = 0.05,
         n_ref: int = 300,
@@ -103,40 +113,159 @@ class StreamingMonitor:
         horizon: int = 5,
         calibration: CalibrationConfig = CalibrationConfig(),
         seed: int = 0,
+        model_ids=None,
     ):
         if n_ref % window:
             raise ValueError("n_ref must be a multiple of window")
+        if detector_factory is None:
+            raise ValueError("detector_factory is required")
+        self.detector_factory = detector_factory
+        self.procedure_name = procedure if isinstance(procedure, str) else None
         self.procedure = make_procedure(procedure, alpha) if isinstance(procedure, str) else procedure
-        if isinstance(detector_factory(), ADWIN) and n_models > 1:
+        self.alpha = alpha
+        self.n_ref, self.window, self.horizon = n_ref, window, horizon
+        self.calibration = calibration
+        self.seed = seed
+        self.rng = np.random.default_rng(seed)
+        if isinstance(detector_factory(), ADWIN) and (n_models or 0) + len(model_ids or ()) > 1:
             warnings.warn(
                 "ADWIN's calibrated p-values are about three times too small at the per-model "
                 "levels a multiplicity correction uses (experiment 10); prefer MeanShift, "
                 "PageHinkley or KSWindow when the false-alarm rate must hold.",
                 stacklevel=2,
             )
-        self.rng = np.random.default_rng(seed)
-        self.calibration = calibration
-        self.t = 0
-        self.models = [
-            CalibratedDetector(detector_factory(), n_ref, window, horizon, calibration, seed=self._seed(k, 0))
-            for k in range(n_models)
-        ]
+        self.models: dict = {}
+        self.n_seen: dict = {}
+        ids = list(model_ids) if model_ids is not None else list(range(n_models or 0))
+        for model_id in ids:
+            self.add_model(model_id)
 
-    def _seed(self, k, ref_start):
-        return [self.calibration.seed, k, ref_start]
+    def _seed(self, model_id, ref_start):
+        key = model_id if isinstance(model_id, (int, np.integer)) else zlib.crc32(str(model_id).encode())
+        return [self.calibration.seed, int(key), int(ref_start)]
 
-    def update(self, xs) -> np.ndarray:
-        xs = np.asarray(xs, dtype=float)
-        pvals = {k: m.update(x) for k, (m, x) in enumerate(zip(self.models, xs))}
-        self.t += 1
-        ready = np.array([k for k, p in pvals.items() if p is not None], dtype=int)
-        if ready.size == 0:
-            return ready
-        rejected = self.procedure.decide(np.array([pvals[k] for k in ready]), self.rng)
-        alarmed = ready[rejected]
-        for k in alarmed:
-            self.models[k].reset(seed=self._seed(int(k), self.t))
-        return alarmed
+    def add_model(self, model_id) -> None:
+        """Start monitoring a new model; it first collects its reference."""
+        if model_id in self.models:
+            raise KeyError(f"model {model_id!r} is already monitored")
+        self.models[model_id] = CalibratedDetector(
+            self.detector_factory(), self.n_ref, self.window, self.horizon, self.calibration,
+            seed=self._seed(model_id, 0),
+        )
+        self.n_seen[model_id] = 0
+
+    def remove_model(self, model_id) -> None:
+        del self.models[model_id]
+        del self.n_seen[model_id]
+
+    def reset_model(self, model_id) -> None:
+        """Call after retraining a model for any reason (alarmed models are reset automatically)."""
+        self.models[model_id].reset(seed=self._seed(model_id, self.n_seen[model_id]))
+
+    def update(self, observations):
+        as_mapping = hasattr(observations, "items")
+        items = observations.items() if as_mapping else enumerate(np.asarray(observations, dtype=float))
+        ready, pvals = [], []
+        for model_id, x in items:
+            p = self.models[model_id].update(x)
+            self.n_seen[model_id] += 1
+            if p is not None:
+                ready.append(model_id)
+                pvals.append(p)
+        alarmed = []
+        if ready:
+            rejected = self.procedure.decide(np.array(pvals), self.rng)
+            alarmed = [m for m, r in zip(ready, rejected) if r]
+            for model_id in alarmed:
+                self.reset_model(model_id)
+        return alarmed if as_mapping else np.array(alarmed, dtype=int)
+
+    # --- persistence ---------------------------------------------------------
+
+    def save(self, path) -> None:
+        """Write the full state to an ``.npz`` file (arrays plus JSON metadata, no pickle)."""
+        arrays, models = {}, []
+        for i, (model_id, det) in enumerate(self.models.items()):
+            entry = {
+                "id": model_id,
+                "n_seen": self.n_seen[model_id],
+                "seed": det.seed,
+                "since_reference": det._since_reference,
+                "nulls": None,
+            }
+            arrays[f"m{i}_reference"] = np.asarray(det._reference, dtype=float)
+            arrays[f"m{i}_recent"] = np.asarray(det._recent, dtype=float)
+            if det._nulls is not None:
+                entry["nulls"] = []
+                for h, null in enumerate(det._nulls):
+                    arrays[f"m{i}_null{h}"] = null.samples
+                    entry["nulls"].append(
+                        {k: _plain(getattr(null, k)) for k in (
+                            "block_length", "min_exceedances", "tail_threshold", "tail_scale", "tail_shape", "tail_prob")}
+                    )
+            models.append(entry)
+        meta = {
+            "version": 1,
+            "alpha": self.alpha,
+            "n_ref": self.n_ref,
+            "window": self.window,
+            "horizon": self.horizon,
+            "seed": self.seed,
+            "calibration": _plain(asdict(self.calibration)),
+            "procedure": {"name": self.procedure.name, "state": _plain(vars(self.procedure))},
+            "rng": _plain(self.rng.bit_generator.state),
+            "models": models,
+        }
+        np.savez(path, meta=np.array(json.dumps(meta)), **arrays)
+
+    @classmethod
+    def load(cls, path, detector_factory, procedure: Procedure | None = None) -> "StreamingMonitor":
+        """Restore a monitor saved with ``save``. Custom procedures must be passed in again."""
+        with np.load(path, allow_pickle=False) as data:
+            meta = json.loads(str(data["meta"]))
+            arrays = {k: data[k] for k in data.files if k != "meta"}
+        cal = CalibrationConfig(**meta["calibration"])
+        proc_meta = meta["procedure"]
+        mon = cls(
+            detector_factory=detector_factory,
+            procedure=procedure if procedure is not None else proc_meta["name"],
+            alpha=meta["alpha"], n_ref=meta["n_ref"], window=meta["window"], horizon=meta["horizon"],
+            calibration=cal, seed=meta["seed"], model_ids=[],
+        )
+        if procedure is None:
+            for k, v in proc_meta["state"].items():
+                setattr(mon.procedure, k, v)
+        mon.rng.bit_generator.state = meta["rng"]
+        for i, entry in enumerate(meta["models"]):
+            model_id = entry["id"]
+            mon.add_model(model_id)
+            det = mon.models[model_id]
+            det.seed = entry["seed"]
+            det._reference = arrays[f"m{i}_reference"].tolist()
+            det._recent.extend(arrays[f"m{i}_recent"].tolist())
+            det._since_reference = entry["since_reference"]
+            mon.n_seen[model_id] = entry["n_seen"]
+            if entry["nulls"] is not None:
+                det._nulls = [
+                    NullDistribution(samples=arrays[f"m{i}_null{h}"], **params)
+                    for h, params in enumerate(entry["nulls"])
+                ]
+        return mon
+
+
+def _plain(obj):
+    """Convert numpy scalars, arrays and tuples into JSON-serialisable Python values."""
+    if isinstance(obj, dict):
+        return {str(k): _plain(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, deque)):
+        return [_plain(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    return obj
 
 
 def from_river(river_detector) -> Detector:

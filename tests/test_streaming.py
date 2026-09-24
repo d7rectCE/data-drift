@@ -50,3 +50,48 @@ def test_from_river_copies_hyperparameters():
     assert ph.default_threshold == 30 and ph.delta == 0.01
     assert from_river(drift.ADWIN(delta=0.01)).default_threshold == pytest.approx(-np.log(0.01))
     assert from_river(drift.binary.DDM(drift_threshold=2.5)).default_threshold == 2.5
+
+
+def _feed(mon, values, start, stop, ids=None):
+    alarms = []
+    for t in range(start, stop):
+        obs = {m: values[i, t] for i, m in enumerate(ids)} if ids else values[:, t]
+        out = mon.update(obs)
+        alarms += [(m, t) for m in out]
+    return alarms
+
+
+def test_save_and_load_continue_identically(tmp_path):
+    sc = make_scenario(ScenarioConfig(n_streams=6, n_steps=1400, phi=0.3, drift_fraction=0.5, magnitude=1.5), seed=5)
+    kw = dict(procedure="bh_window", alpha=0.2, n_ref=200, window=100, horizon=3, calibration=CAL, seed=1)
+    ids = ["a", "b", "c", "d", "e", "f"]
+    straight = StreamingMonitor(detector_factory=PageHinkley, model_ids=ids, **kw)
+    first = _feed(straight, sc.values, 0, 700, ids)
+    rest = _feed(straight, sc.values, 700, 1400, ids)
+
+    resumed = StreamingMonitor(detector_factory=PageHinkley, model_ids=ids, **kw)
+    assert _feed(resumed, sc.values, 0, 700, ids) == first
+    resumed.save(tmp_path / "state.npz")
+    loaded = StreamingMonitor.load(tmp_path / "state.npz", detector_factory=PageHinkley)
+    assert _feed(loaded, sc.values, 700, 1400, ids) == rest
+    assert len(first + rest) > 0
+
+
+def test_models_can_be_added_removed_and_report_irregularly():
+    rng = np.random.default_rng(3)
+    mon = StreamingMonitor(detector_factory=PageHinkley, model_ids=["x"], n_ref=200, window=100, horizon=2,
+                           calibration=CAL)
+    for _ in range(150):
+        mon.update({"x": rng.normal()})
+    mon.add_model("y")
+    for t in range(400):
+        obs = {"x": rng.normal()}
+        if t % 2 == 0:  # y reports every other step
+            obs["y"] = rng.normal()
+        mon.update(obs)
+    assert mon.n_seen == {"x": 550, "y": 200}
+    assert mon.models["x"].calibrated and mon.models["y"].calibrated
+    mon.remove_model("x")
+    assert list(mon.models) == ["y"]
+    with pytest.raises(KeyError):
+        mon.update({"x": 0.0})
