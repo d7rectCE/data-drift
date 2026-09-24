@@ -104,7 +104,8 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 3. **Решение по парку.** p-значения всех моделей, у которых закончилось окно, проходят через
    поправку на множественность; модели с тревогой переобучаются и собирают новый опорный отрезок.
 
-Подробное описание — [docs/method.md](docs/method.md); справочник по всем классам, методам и
+Подробное описание — [docs/method.md](docs/method.md); связь с литературой —
+[docs/related_work.md](docs/related_work.md); справочник по всем классам, методам и
 функциям — [docs/api.md](docs/api.md).
 
 ## Ограничения
