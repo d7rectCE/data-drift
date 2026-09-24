@@ -15,7 +15,10 @@ monitor = StreamingMonitor(
     calibration=CalibrationConfig(n_boot=500),  # default is 2000 replicates
 )
 
+caught = set()
 for t in range(scenario.n_steps):
     for k in monitor.update(scenario.values[:, t]):
-        truth = "дрейф" if scenario.change_start[k] < t else "ложная тревога"
-        print(f"шаг {t + 1}: переобучить модель {k} ({truth})")
+        # the drift is caught by the first alarm after its onset; any other alarm is false
+        is_drift = scenario.change_start[k] < t and k not in caught
+        caught.update([k] if is_drift else [])
+        print(f"шаг {t + 1}: переобучить модель {k} ({'дрейф' if is_drift else 'ложная тревога'})")
