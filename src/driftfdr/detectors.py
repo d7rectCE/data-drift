@@ -245,6 +245,42 @@ class KSWindow(Detector):
         )
 
 
+class MeanShift(Detector):
+    """Persistent rise of the mean: the smallest window-mean excess over the last ``persistence`` windows.
+
+    The statistic for window ``i`` is ``min_{j in last m windows} mean(window j) - mean(reference)``
+    where windows not yet observed count as zero excess, so no alarm is possible before
+    ``persistence`` windows have passed. A spike confined to one window cannot make it
+    large when ``persistence > 1``, so alarms require the rise to last. With
+    ``persistence = 1`` it is the plain window-vs-reference mean test used by Rombouts &
+    Wilms for loss monitoring. There is no river counterpart; ``default_threshold`` is
+    a fixed rise of 0.1 in signal units.
+    """
+
+    name = "MeanShift"
+
+    def __init__(self, persistence: int = 3):
+        self.persistence = persistence
+
+    @property
+    def default_threshold(self) -> float:
+        return 0.1
+
+    def window_statistics(self, x: np.ndarray, n_ref: int, window: int) -> np.ndarray:
+        x = np.atleast_2d(np.asarray(x, dtype=float))
+        n = (x.shape[1] - n_ref) // window
+        ref = x[:, :n_ref].mean(axis=1, keepdims=True)
+        means = x[:, n_ref : n_ref + n * window].reshape(x.shape[0], n, window).mean(axis=2) - ref
+        out = np.empty_like(means)
+        for i in range(n):
+            recent = means[:, max(0, i - self.persistence + 1) : i + 1].min(axis=1)
+            out[:, i] = recent if i + 1 >= self.persistence else np.minimum(recent, 0.0)
+        return out
+
+    def __repr__(self) -> str:
+        return f"MeanShift(persistence={self.persistence})"
+
+
 def ks_statistic(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Row-wise two-sample KS statistic, correct in the presence of ties."""
     n, m = a.shape[1], b.shape[1]

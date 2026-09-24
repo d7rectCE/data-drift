@@ -91,3 +91,15 @@ def test_ks_default_threshold_is_nominal_level():
     det = KSWindow(alpha=0.05, n_ref=300, window=100)
     p = det.nominal_pvalue(det.default_threshold, 300, 100)
     assert p == pytest.approx(0.05, rel=1e-6)
+
+
+def test_meanshift_ignores_one_window_spike_but_not_lasting_rise():
+    from driftfdr.detectors import MeanShift
+
+    x = np.zeros((1, 300 + 5 * 100))
+    x[0, 300:400] = 1.0  # spike in the first window only
+    stats = MeanShift(persistence=3).window_statistics(x, 300, 100)[0]
+    assert np.all(stats == 0.0)  # before three windows no alarm is possible, after it the spike is gone
+    y = np.zeros((1, 800))
+    y[0, 500:] = 0.5  # lasting rise from window 2
+    assert MeanShift(3).window_statistics(y, 300, 100)[0, -1] == 0.5
