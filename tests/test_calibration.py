@@ -54,3 +54,20 @@ def test_pvalues_roughly_uniform_on_stationary_streams(method):
     assert p.min() > 0 and p.max() <= 1
     assert 0.02 < np.mean(p <= 0.05) < 0.09
     assert 0.40 < np.mean(p <= 0.5) < 0.60
+
+
+def test_tolerance_makes_small_shifts_null():
+    rng = np.random.default_rng(10)
+    ref = rng.normal(size=300)
+    shifted = np.concatenate([ref, rng.normal(0.2, 1, 100)])
+    det = PageHinkley()
+    stat = det.window_statistics(shifted[None], 300, 100)[0, 0]
+    strict = calibrate(det, ref, 100, config=CalibrationConfig(n_boot=300, method="iid"))[0]
+    tolerant = calibrate(det, ref, 100, config=CalibrationConfig(n_boot=300, method="iid", tolerance=0.5))[0]
+    assert tolerant.pvalue(stat)[0] > strict.pvalue(stat)[0]
+    assert np.median(tolerant.samples) > np.median(strict.samples)
+
+
+def test_constant_reference_is_untestable():
+    nulls = calibrate(PageHinkley(), np.ones(300), 100, config=CalibrationConfig(n_boot=50))
+    assert nulls[0].pvalue(1e6)[0] == 1.0

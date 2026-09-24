@@ -172,3 +172,28 @@ def elec2_scenario(
     losses, errors = model_fleet(X, y, n_models, n_features, train_size, rng, label_noise=target)
     config = ScenarioConfig(n_streams=n_models, n_steps=n - train_size, phi=np.nan, rho=np.nan, drift_fraction=drift_fraction)
     return _scenario(losses, errors, change[:, None], config, offset=train_size)
+
+
+def forward_error(errors: np.ndarray, span: int = 1000) -> np.ndarray:
+    """Error rate over the next ``span`` steps from each step (shorter at the end): what
+    the model will actually cost if it is not retrained now, known in hindsight."""
+    e = np.asarray(errors, dtype=float)
+    c = np.concatenate([np.zeros((e.shape[0], 1)), np.cumsum(e, axis=1)], axis=1)
+    idx = np.arange(e.shape[1])
+    hi = np.minimum(idx + span, e.shape[1])
+    return (c[:, hi] - c[:, idx]) / (hi - idx)
+
+
+def error_rate_view(scenario: Scenario, tolerance: float, span: int = 1000) -> Scenario:
+    """Monitor the 0/1 error stream; judge alarms by *material and persistent* degradation.
+
+    A test is null iff the error rate over the ``span`` steps following the tested
+    window's start exceeds the observed error rate over the reference by at most
+    ``tolerance``. Transient spikes that pass by themselves are therefore null:
+    retraining for them would be wasted.
+    """
+    from dataclasses import replace
+
+    errors = scenario.errors.astype(float)
+    sc = replace(scenario, values=errors)
+    return sc.with_material_null(tolerance, truth=forward_error(scenario.errors, span), truth_ref=errors)

@@ -108,7 +108,7 @@ def run_monitor(
                     "statistic": stats,
                     "pvalue": pvals,
                     "rejected": rejected,
-                    "is_null": scenario.is_null(active, ref_start[active], t1),
+                    "is_null": scenario.is_null(active, ref_start[active], t1, ref_len=n_ref, window=W),
                 }
             )
         )

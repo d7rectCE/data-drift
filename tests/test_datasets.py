@@ -33,3 +33,17 @@ def test_no_change_streams_are_always_null():
     values = np.zeros((1, 500))
     sc = _scenario(values, values.astype(np.int8), [[NO_CHANGE]], ScenarioConfig(n_streams=1))
     assert sc.is_null([0], 0, 500)[0] and sc.drifting.size == 0
+
+
+def test_forward_error_and_material_null():
+    from driftfdr.datasets import error_rate_view, forward_error
+
+    e = np.zeros((1, 3000), dtype=np.int8)
+    e[0, 1000:1030] = 1  # short spike: 3% of the next 1000 steps
+    e[0, 2500:] = 1  # persistent degradation
+    f = forward_error(e, span=1000)
+    assert f[0, 0] == 0 and f[0, 2600] == 1
+    sc = error_rate_view(_scenario(e.astype(float), e, [[NO_CHANGE]], ScenarioConfig(n_streams=1)), 0.05, span=1000)
+    # the spike window is null (it passes by itself), the start of the lasting rise is not
+    assert sc.is_null([0], 0, 1100, ref_len=300, window=100)[0]
+    assert not sc.is_null([0], 0, 2600, ref_len=300, window=100)[0]

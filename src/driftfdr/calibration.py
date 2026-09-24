@@ -40,6 +40,10 @@ class CalibrationConfig:
     tail_fraction: float = 0.1
     min_exceedances: int = 10
     seed: int = 12345
+    tolerance: float = 0.0
+    """Null of *material* change: the new data may exceed the reference level by up to
+    this much (signal units). The bootstrap continuation is shifted up by it, the least
+    favourable point of that null, so p-values are valid for every smaller increase."""
 
 
 @dataclass
@@ -136,6 +140,26 @@ def resolve_block_length(reference: np.ndarray, method: str, config: Calibration
 def bootstrap_series(reference, length: int, config: CalibrationConfig, rng, binary: bool = False):
     """``B`` pseudo series: a resampled reference followed by ``length`` resampled steps.
 
+    With ``config.tolerance > 0`` the continuation is raised by the tolerance: added to
+    continuous values, or, for binary errors, by turning zeros into ones with the
+    probability that raises the error rate by that much.
+    """
+    series, param = _resample(reference, length, config, rng, binary)
+    if config.tolerance > 0:
+        n_ref = reference.size
+        new = series[:, n_ref:]
+        if binary:
+            p0 = float(np.mean(reference))
+            flip = rng.random(new.shape) < min(1.0, config.tolerance / max(1e-9, 1.0 - p0))
+            series[:, n_ref:] = np.where(flip, 1.0, new)
+        else:
+            series[:, n_ref:] = new + config.tolerance
+    return series, param
+
+
+def _resample(reference, length: int, config: CalibrationConfig, rng, binary: bool):
+    """Resampled reference plus continuation, before any tolerance shift.
+
     Reference and continuation are resampled independently, since the tested
     data are generally not adjacent to the reference. The sieve bootstrap
     produces continuous values, so binary signals fall back to moving blocks.
@@ -157,7 +181,7 @@ def bootstrap_series(reference, length: int, config: CalibrationConfig, rng, bin
     b = resolve_block_length(reference, method, config)
     ref_idx = bootstrap_indices(n_ref, n_ref, B, b, method, rng)
     new_idx = bootstrap_indices(n_ref, length, B, b, method, rng)
-    return reference[np.concatenate([ref_idx, new_idx], axis=1)], b
+    return reference[np.concatenate([ref_idx, new_idx], axis=1)].astype(float), b
 
 
 def calibrate_many(
@@ -183,7 +207,8 @@ def calibrate_many(
     n_streams, n_ref = references.shape
     length = horizon * window
     B = config.n_boot
-    binary = detector.input_kind == "errors"
+    # binary by declaration (DDM) or by content (any detector fed 0/1 errors)
+    binary = detector.input_kind == "errors" or bool(np.isin(references, (0.0, 1.0)).all())
     chunk = max(1, max_chunk_elements // (B * (n_ref + length)))
     out: list[list[NullDistribution]] = []
     for c0 in range(0, n_streams, chunk):
@@ -196,9 +221,19 @@ def calibrate_many(
             params.append(param)
         stats = detector.window_statistics(np.concatenate(series), n_ref, window)
         stats = stats.reshape(len(rows), B, horizon)
-        for st, b in zip(stats, params):
+        for a, st, b in zip(rows, stats, params):
+            if _untestable(references[a], binary, config.tolerance):
+                st = np.full_like(st, np.inf)  # every p-value becomes 1
             out.append([NullDistribution.from_samples(st[:, h], b, config) for h in range(horizon)])
     return out
+
+
+def _untestable(reference: np.ndarray, binary: bool, tolerance: float) -> bool:
+    """A constant reference carries no information on variability, and a binary error
+    rate already within ``tolerance`` of 1 cannot rise materially; such streams get p = 1."""
+    if np.ptp(reference) == 0:
+        return True
+    return binary and reference.mean() + tolerance >= 1.0
 
 
 def calibrate(

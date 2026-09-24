@@ -38,6 +38,8 @@ class ScenarioConfig:
     drift_type: str = "abrupt"
     magnitude: float = 1.0
     """Size of the mean shift, in units of the marginal standard deviation."""
+    magnitude_range: tuple[float, float] | None = None
+    """If set, each drifting stream draws its shift uniformly from this range instead."""
     gradual_length: int = 300
     onset_range: tuple[float, float] = (0.3, 0.8)
     """Onsets are drawn uniformly from this fraction range of ``n_steps``."""
@@ -63,6 +65,31 @@ class Scenario:
     """Drift event of each stream, -1 for sporadic changes and stable streams."""
     later_changes: np.ndarray | None = field(default=None)
     """Optional ``(n_streams, m, 2)`` array of further (start, end) changes after the first."""
+    truth: np.ndarray | None = field(default=None)
+    """Optional ``(n_streams, n_steps)`` oracle level of the monitored quantity (e.g. the
+    smoothed true error rate). When set, a test is null iff the level in the tested
+    window exceeds the level over the reference by at most ``tolerance``: the null of
+    *material degradation* instead of *any change*."""
+    tolerance: float = 0.0
+    truth_ref: np.ndarray | None = field(default=None, repr=False)
+    """Optional level used for the reference side of the oracle comparison (defaults to ``truth``)."""
+    mean_shift: np.ndarray | None = field(default=None, repr=False)
+    """True mean shift of every stream (synthetic scenarios only)."""
+
+    def with_material_null(
+        self, tolerance: float, truth: np.ndarray | None = None, truth_ref: np.ndarray | None = None
+    ) -> "Scenario":
+        """Copy whose ground truth is *material degradation*: level up by more than ``tolerance``.
+
+        ``truth`` defaults to the true mean shift of a synthetic scenario.
+        """
+        from dataclasses import replace
+
+        truth = self.mean_shift if truth is None else truth
+        if truth is None:
+            raise ValueError("no oracle level available for this scenario")
+        ref = None if truth_ref is None else np.asarray(truth_ref, dtype=float)
+        return replace(self, truth=np.asarray(truth, dtype=float), truth_ref=ref, tolerance=tolerance)
 
     def changes(self) -> tuple[np.ndarray, np.ndarray]:
         """All change starts and ends, shape ``(n_streams, n_changes)``, padded with ``NO_CHANGE``."""
@@ -91,14 +118,31 @@ class Scenario:
             return self.errors
         raise ValueError(f"unknown signal kind {kind!r}")
 
-    def is_null(self, streams, start, stop) -> np.ndarray:
-        """Whether the mean of each stream is constant on ``[start, stop)``.
+    def _cumsum(self, name):
+        cache = self.__dict__.setdefault("_cumsums", {})
+        arr = getattr(self, name)
+        if name not in cache or cache[name].shape[1] != arr.shape[1] + 1:
+            cache[name] = np.concatenate([np.zeros((arr.shape[0], 1)), np.cumsum(arr, axis=1)], axis=1)
+        return cache[name]
 
-        This is the regime-based null: a test comparing a reference segment with
-        a later window is null iff no change happens anywhere between the start
-        of the reference and the end of the window.
+    def is_null(self, streams, start, stop, ref_len=None, window=None) -> np.ndarray:
+        """Ground truth of the test comparing the reference at ``start`` with the window ending at ``stop``.
+
+        Regime null (default): no change anywhere between the start of the
+        reference and the end of the window. With ``truth`` set: the oracle level
+        in the last ``window`` steps exceeds its mean over the ``ref_len``-step
+        reference by at most ``tolerance``.
         """
         streams = np.asarray(streams)
+        if self.truth is not None:
+            if ref_len is None or window is None:
+                raise ValueError("ref_len and window are needed with an oracle truth")
+            c = self._cumsum("truth")
+            cr = c if self.truth_ref is None else self._cumsum("truth_ref")
+            start, stop = np.asarray(start), np.asarray(stop)
+            ref = (cr[streams, start + ref_len] - cr[streams, start]) / ref_len
+            cur = (c[streams, stop] - c[streams, stop - window]) / window
+            return cur - ref <= self.tolerance
         cs, ce = self.changes()
         start = np.asarray(start)[..., None] if np.ndim(start) else start
         stop = np.asarray(stop)[..., None] if np.ndim(stop) else stop
@@ -138,16 +182,19 @@ def make_scenario(config: ScenarioConfig, seed: int = 0) -> Scenario:
 
     def apply_change(streams, tau):
         for k in streams:
+            size = config.magnitude
+            if config.magnitude_range is not None:
+                size = float(rng.uniform(*config.magnitude_range))
             kind_k = config.drift_type
             if kind_k == "mixed":
                 kind_k = str(rng.choice(["abrupt", "gradual"]))
             if kind_k == "abrupt":
-                shift[k, tau:] = config.magnitude
+                shift[k, tau:] = size
                 end = tau
             else:
                 L = config.gradual_length
                 ramp = np.minimum(1.0, (np.arange(tau, T) - tau + 1) / L)
-                shift[k, tau:] = config.magnitude * ramp
+                shift[k, tau:] = size * ramp
                 end = tau + L - 1
             change_start[k], change_end[k], kind[k] = tau, end, kind_k
 
@@ -167,4 +214,4 @@ def make_scenario(config: ScenarioConfig, seed: int = 0) -> Scenario:
     latent = ar1_latent(n, T, config.phi, config.rho, rng)
     values = latent + shift
     errors = (values > stats.norm.isf(config.base_error_rate)).astype(np.int8)
-    return Scenario(config, values, errors, change_start, change_end, kind, event)
+    return Scenario(config, values, errors, change_start, change_end, kind, event, mean_shift=shift)

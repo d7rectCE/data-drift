@@ -59,6 +59,7 @@ def summarize(result: MonitorResult) -> dict:
         "fdp": n_false / max(n_alarms, 1),
         "window_fdp": float(window_fdp),
         "far_per_test": n_false / max(int(null.sum()), 1),
+        "power_per_test": int((rejected & ~null).sum()) / max(int((~null).sum()), 1),
         "false_alarms_per_window": n_false / result.n_windows,
         "p_any_false_alarm_per_window": fa_windows / result.n_windows,
         "false_alarms_per_1k_stream_steps": 1000 * n_false / monitored_steps,
