@@ -45,3 +45,18 @@ def test_sieve_preserves_autocorrelation():
     xc = series - series.mean(axis=1, keepdims=True)
     r1 = np.mean(np.sum(xc[:, 1:] * xc[:, :-1], axis=1) / np.sum(xc * xc, axis=1))
     assert 0.55 < r1 < 0.8
+
+
+def test_sieve_pu_spreads_coefficients_like_their_estimator():
+    from driftfdr.bootstrap import ar_sieve_pu_series
+
+    x = ar1_latent(1, 300, 0.5, 0.0, np.random.default_rng(6))[0]
+    series, order = ar_sieve_pu_series(x, 1000, 400, np.random.default_rng(7))
+    assert series.shape == (400, 1000) and order >= 1
+    xc = series - series.mean(axis=1, keepdims=True)
+    r1 = np.sum(xc[:, 1:] * xc[:, :-1], axis=1) / np.sum(xc * xc, axis=1)
+    # replicates differ in their lag-1 autocorrelation by about the estimator's error sqrt((1 - phi^2) / n)
+    assert 0.03 < r1.std() < 0.09
+    plain, _ = ar_sieve_series(x, 1000, 400, np.random.default_rng(7))
+    pc = plain - plain.mean(axis=1, keepdims=True)
+    assert r1.std() > (np.sum(pc[:, 1:] * pc[:, :-1], axis=1) / np.sum(pc * pc, axis=1)).std()

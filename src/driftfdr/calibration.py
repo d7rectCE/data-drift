@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .bootstrap import ar1_block_length, ar_sieve_series, bootstrap_indices
+from .bootstrap import ar1_block_length, ar_sieve_pu_series, ar_sieve_series, bootstrap_indices
 from .detectors import Detector
 
 P_FLOOR = 1e-16
@@ -144,7 +144,12 @@ def bootstrap_series(reference, length: int, config: CalibrationConfig, rng, bin
     """
     n_ref = reference.size
     B = config.n_boot
-    method = "moving" if (config.method == "sieve" and binary) else config.method
+    method = "moving" if (config.method.startswith("sieve") and binary) else config.method
+    if method == "sieve_pu":
+        # one path with shared coefficients; the gap decorrelates reference and new data
+        gap = 200
+        path, order = ar_sieve_pu_series(reference, n_ref + gap + length, B, rng)
+        return np.concatenate([path[:, :n_ref], path[:, n_ref + gap :]], axis=1), order
     if method == "sieve":
         ref_part, order = ar_sieve_series(reference, n_ref, B, rng)
         new_part, _ = ar_sieve_series(reference, length, B, rng)

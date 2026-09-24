@@ -6,6 +6,12 @@
 * ``sieve``: AR-sieve bootstrap (Bühlmann, 1997), an AR(p) fitted by
   Yule–Walker with AIC order selection, driven by resampled residuals; only
   meaningful for continuous signals;
+* ``sieve_pu``: AR-sieve with parameter uncertainty. Each replicate refits the
+  AR model on a series simulated from the fitted one and is generated from its
+  own refitted coefficients, so the estimation error of the reference model
+  (the source of the anti-conservative tails the plain sieve shows) is carried
+  into the null distribution. Same idea as the correction of Wu & Apley for
+  nested bootstraps.
 * ``iid``: ordinary bootstrap, kept as a baseline that ignores dependence.
 """
 
@@ -14,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 from scipy import signal
 
-METHODS = ("moving", "stationary", "sieve", "iid")
+METHODS = ("moving", "stationary", "sieve", "sieve_pu", "iid")
 
 
 def ar1_block_length(x: np.ndarray, method: str = "moving") -> int:
@@ -101,3 +107,50 @@ def ar_sieve_series(x: np.ndarray, n_out: int, n_boot: int, rng, burn_in: int = 
     innov = rng.choice(resid, size=(n_boot, burn_in + n_out))
     series = signal.lfilter([1.0], np.concatenate([[1.0], -a]), innov, axis=1)
     return series[:, burn_in:] + mu, p
+
+
+def _levinson_batch(acov: np.ndarray, order: int):
+    """Yule–Walker coefficients of a fixed order for many autocovariance rows at once."""
+    a = np.zeros((acov.shape[0], 0))
+    err = acov[:, 0].copy()
+    for k in range(1, order + 1):
+        refl = (acov[:, k] - np.einsum("bi,bi->b", a, acov[:, k - 1 : 0 : -1])) / err
+        a = np.concatenate([a - refl[:, None] * a[:, ::-1], refl[:, None]], axis=1)
+        err = err * (1.0 - refl**2)
+    return a, err
+
+
+def ar_sieve_pu_series(x: np.ndarray, n_out: int, n_boot: int, rng, burn_in: int = 200):
+    """AR-sieve replicates whose coefficients are redrawn per replicate; returns ``(series, order)``.
+
+    Coefficients of replicate ``b`` are the Yule–Walker fit (same order as the
+    original AIC choice) to a series of ``len(x)`` steps simulated from the
+    model fitted to ``x``, i.e. a parametric bootstrap draw of the estimator.
+    """
+    x = np.asarray(x, dtype=float)
+    n = x.size
+    mu = x.mean()
+    a = fit_ar_aic(x)
+    p = a.size
+    xc = x - mu
+    if p == 0:
+        # white noise: parameter uncertainty is only in the variance
+        sims = rng.choice(xc, size=(n_boot, n))
+        scale = sims.std(axis=1) / xc.std()
+        return rng.choice(xc, size=(n_boot, n_out)) * scale[:, None] + mu, 0
+    resid = xc[p:] - np.stack([xc[p - i : n - i] for i in range(1, p + 1)], axis=1) @ a
+    resid = resid - resid.mean()
+    ar = np.concatenate([[1.0], -a])
+    sims = signal.lfilter([1.0], ar, rng.choice(resid, size=(n_boot, burn_in + n)), axis=1)[:, burn_in:]
+    sims = sims - sims.mean(axis=1, keepdims=True)
+    acov = np.stack([np.sum(sims[:, : n - k] * sims[:, k:], axis=1) / n for k in range(p + 1)], axis=1)
+    a_b, err_b = _levinson_batch(acov, p)
+    scale = np.sqrt(np.maximum(err_b, 1e-12) / np.mean(resid**2))
+    innov = rng.choice(resid, size=(n_boot, burn_in + n_out)) * scale[:, None]
+    y = np.zeros_like(innov)
+    for t in range(innov.shape[1]):
+        acc = innov[:, t].copy()
+        for i in range(1, min(p, t) + 1):
+            acc += a_b[:, i - 1] * y[:, t - i]
+        y[:, t] = acc
+    return y[:, burn_in:] + mu, p
