@@ -35,6 +35,8 @@ def gamma_saffron(j: np.ndarray) -> np.ndarray:
 
 
 class Procedure(ABC):
+    """Base class of decision rules: given the p-values of one window, which models alarm."""
+
     name = "procedure"
     uses_statistics = False
     """If true, ``decide`` receives raw detector statistics instead of p-values."""
@@ -191,6 +193,7 @@ def bh_count(p: np.ndarray, alpha: float) -> int:
 
 
 def benjamini_hochberg(p: np.ndarray, alpha: float) -> np.ndarray:
+    """Boolean rejections of the Benjamini–Hochberg step-up procedure at level ``alpha``."""
     p = np.asarray(p, dtype=float)
     k = bh_count(p, alpha)
     if k == 0:
@@ -214,6 +217,7 @@ class OnlineProcedure(Procedure):
         return rejected
 
     def test(self, p: float) -> bool:
+        """Test the next hypothesis: compute its level, decide, update the state."""
         self.t += 1
         level = self.next_level()
         self.levels.append(level)
@@ -222,10 +226,12 @@ class OnlineProcedure(Procedure):
         return rejected
 
     @abstractmethod
-    def next_level(self) -> float: ...
+    def next_level(self) -> float:
+        """Level ``alpha_t`` of the hypothesis about to be tested."""
 
     @abstractmethod
-    def update(self, p: float, rejected: bool) -> None: ...
+    def update(self, p: float, rejected: bool) -> None:
+        """Record the outcome of the hypothesis just tested."""
 
 
 class LOND(OnlineProcedure):
@@ -340,4 +346,5 @@ PROCEDURES = {
 
 
 def make_procedure(name: str, alpha: float = 0.05) -> Procedure:
+    """A fresh procedure by name: one of the keys of ``PROCEDURES``."""
     return PROCEDURES[name](alpha)

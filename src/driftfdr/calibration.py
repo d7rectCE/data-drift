@@ -54,6 +54,8 @@ class CalibrationConfig:
 
 @dataclass
 class NullDistribution:
+    """Bootstrap null distribution of a window statistic, with an optional fitted upper tail."""
+
     samples: np.ndarray
     """Sorted bootstrap statistics (may contain ``inf``)."""
     block_length: int
@@ -68,6 +70,7 @@ class NullDistribution:
     def from_samples(
         cls, samples: np.ndarray, block_length: int, config: CalibrationConfig
     ) -> NullDistribution:
+        """Sort the bootstrap statistics and fit the tail model requested by ``config``."""
         samples = np.sort(np.asarray(samples, dtype=float))
         null = cls(samples, block_length, config.min_exceedances)
         if config.tail != "none":
@@ -78,9 +81,15 @@ class NullDistribution:
 
     @property
     def has_tail(self) -> bool:
+        """Whether a tail model was fitted (it is not for degenerate or tiny samples)."""
         return bool(np.isfinite(self.tail_scale))
 
     def pvalue(self, statistic) -> np.ndarray:
+        """p-values of one or more observed statistics, as an array.
+
+        ``(1 + #{T* >= T}) / (B + 1)``, replaced by the tail model when fewer than
+        ``min_exceedances`` bootstrap statistics reach ``T``.
+        """
         stat = np.atleast_1d(np.asarray(statistic, dtype=float))
         B = self.samples.size
         count = B - np.searchsorted(self.samples, stat, side="left")
@@ -136,6 +145,7 @@ def fit_tail(
 
 
 def resolve_block_length(reference: np.ndarray, method: str, config: CalibrationConfig) -> int:
+    """Block length for a block method: 1 for iid, the AR(1) plug-in for ``"auto"``, else the given value."""
     if method == "iid":
         return 1
     if config.block_length == "auto":

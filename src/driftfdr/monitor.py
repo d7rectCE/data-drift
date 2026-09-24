@@ -29,6 +29,8 @@ from .streams import Scenario
 
 @dataclass(frozen=True)
 class MonitorConfig:
+    """Reference length, window length and look-back (in windows) of the monitoring loop."""
+
     n_ref: int = 300
     window: int = 100
     horizon: int = 5
@@ -42,6 +44,8 @@ class MonitorConfig:
 
 @dataclass
 class MonitorResult:
+    """Outcome of ``run_monitor``: every test with its decision and ground truth."""
+
     tests: pd.DataFrame
     """One row per (stream, window) test: statistic, p-value, decision, ground truth."""
     n_windows: int

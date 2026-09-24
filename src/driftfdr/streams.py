@@ -28,6 +28,8 @@ DRIFT_TYPES = ("abrupt", "gradual", "mixed")
 
 @dataclass(frozen=True)
 class ScenarioConfig:
+    """Parameters of a synthetic scenario of AR(1) model-error streams with known changes."""
+
     n_streams: int = 100
     n_steps: int = 5000
     phi: float = 0.5
@@ -53,6 +55,8 @@ class ScenarioConfig:
 
 @dataclass
 class Scenario:
+    """Monitored signals of every stream plus the ground truth needed to score alarms."""
+
     config: ScenarioConfig
     values: np.ndarray
     errors: np.ndarray
@@ -103,17 +107,21 @@ class Scenario:
 
     @property
     def n_streams(self) -> int:
+        """Number of streams (models)."""
         return self.values.shape[0]
 
     @property
     def n_steps(self) -> int:
+        """Length of every stream."""
         return self.values.shape[1]
 
     @property
     def drifting(self) -> np.ndarray:
+        """Indices of streams with at least one change."""
         return np.flatnonzero(self.change_start < NO_CHANGE)
 
     def signal(self, kind: str) -> np.ndarray:
+        """The array a detector consumes: ``"values"``, ``"errors"`` or ``"features"``."""
         if kind == "values":
             return self.values
         if kind == "features":
@@ -169,6 +177,7 @@ def ar1_latent(n_streams: int, n_steps: int, phi: float, rho: float, rng) -> np.
 
 
 def make_scenario(config: ScenarioConfig, seed: int = 0) -> Scenario:
+    """Generate a synthetic scenario; the same config and seed always give the same data."""
     if config.drift_type not in DRIFT_TYPES:
         raise ValueError(f"drift_type must be one of {DRIFT_TYPES}")
     rng = np.random.default_rng(seed)

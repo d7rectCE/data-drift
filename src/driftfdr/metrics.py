@@ -22,6 +22,7 @@ from .streams import NO_CHANGE
 
 
 def summarize(result: MonitorResult) -> dict:
+    """Error and detection metrics of one monitoring run, as a flat dict (see the module docstring)."""
     tests = result.tests
     scenario = result.scenario
     n_streams, n_steps = scenario.n_streams, scenario.n_steps

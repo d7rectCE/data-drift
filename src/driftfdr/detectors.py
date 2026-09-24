@@ -30,6 +30,14 @@ from scipy import signal, stats
 
 
 class Detector(ABC):
+    """Base class: a drift detector exposed as a continuous, vectorised score.
+
+    Subclasses implement ``scores`` (sequential detectors, whose statistic for a
+    window is the maximum score inside it) or override ``window_statistics``
+    directly (window tests such as KS or MeanShift), and give the score threshold
+    that reproduces the detector's usual default as ``default_threshold``.
+    """
+
     name: str = "detector"
     input_kind: str = "values"
     """Which scenario signal the detector consumes: ``values`` or ``errors``."""
@@ -40,6 +48,11 @@ class Detector(ABC):
         """Score threshold equivalent to the river default hyperparameters."""
 
     def scores(self, x: np.ndarray) -> np.ndarray:
+        """Running score of shape ``(n_series, n_steps)`` for input of the same shape.
+
+        The score at step ``t`` depends only on data up to ``t``; the detector would
+        fire at ``t`` with sensitivity ``theta`` iff the score exceeds ``h(theta)``.
+        """
         raise NotImplementedError
 
     def window_statistics(self, x: np.ndarray, n_ref: int, window: int) -> np.ndarray:
@@ -233,6 +246,7 @@ class KSWindow(Detector):
         return float(stats.kstwo.isf(self.alpha, en))
 
     def nominal_pvalue(self, statistic: np.ndarray, n_ref: int, window: int) -> np.ndarray:
+        """Asymptotic KS p-value assuming i.i.d. data (what ``scipy.stats.ks_2samp`` reports)."""
         en = round(n_ref * window / (n_ref + window))
         return stats.kstwo.sf(statistic, en)
 
@@ -326,4 +340,5 @@ def ks_statistic(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def default_detectors(n_ref: int = 300, window: int = 100) -> list[Detector]:
+    """The four detectors of the original study, with river-default thresholds: PH, DDM, ADWIN, KS."""
     return [PageHinkley(), DDM(), ADWIN(), KSWindow(n_ref=n_ref, window=window)]

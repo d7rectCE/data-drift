@@ -124,6 +124,12 @@ def label_runs(y: np.ndarray, min_length: int = 100) -> list[tuple[int, int]]:
 def insects_scenario(
     n_models=50, n_features=8, train_size=3000, variant="abrupt_balanced", ground_truth="extended", seed=0
 ) -> Scenario:
+    """INSECTS (Souza et al., 2020) with a fleet of models, monitored after the training segment.
+
+    ``ground_truth="documented"`` uses the published change points only;
+    ``"extended"`` adds the starts of long single-class runs found from the labels.
+    Needs river (the data are downloaded on first use).
+    """
     from river import datasets
 
     X, y = _load_river(datasets.Insects(variant=variant))

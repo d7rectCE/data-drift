@@ -30,6 +30,14 @@ from .online_fdr import Procedure, make_procedure
 
 
 class CalibratedDetector:
+    """One detector for one model: collects a reference, calibrates, then emits p-values.
+
+    ``update(x)`` returns ``None`` while the reference is being collected and between
+    window ends, and a p-value at the end of every window afterwards. The statistic
+    looks back over up to ``horizon`` windows; one bootstrap pass calibrates all of
+    them. ``reset()`` starts a new reference, e.g. after retraining.
+    """
+
     def __init__(
         self,
         detector: Detector,
@@ -56,6 +64,7 @@ class CalibratedDetector:
 
     @property
     def calibrated(self) -> bool:
+        """Whether the reference is complete and the null distributions are ready."""
         return self._nulls is not None
 
     def update(self, x: float) -> float | None:
@@ -155,6 +164,7 @@ class StreamingMonitor:
         self.n_seen[model_id] = 0
 
     def remove_model(self, model_id) -> None:
+        """Stop monitoring a model and forget its state."""
         del self.models[model_id]
         del self.n_seen[model_id]
 
@@ -163,6 +173,12 @@ class StreamingMonitor:
         self.models[model_id].reset(seed=self._seed(model_id, self.n_seen[model_id]))
 
     def update(self, observations):
+        """Feed new observations; return the models to retrain now.
+
+        ``observations`` is a sequence with one value per model (models ``0..n-1``,
+        returns an integer array) or a mapping ``{model_id: value}`` for any subset
+        of models (returns a list of ids). Alarmed models are reset automatically.
+        """
         as_mapping = hasattr(observations, "items")
         items = observations.items() if as_mapping else enumerate(np.asarray(observations, dtype=float))
         ready, pvals = [], []
