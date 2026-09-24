@@ -197,3 +197,41 @@ def error_rate_view(scenario: Scenario, tolerance: float, span: int = 1000) -> S
     errors = scenario.errors.astype(float)
     sc = replace(scenario, values=errors)
     return sc.with_material_null(tolerance, truth=forward_error(scenario.errors, span), truth_ref=errors)
+
+
+def _fleet_scenario(X, y, n_models, n_features, train_size, seed, label):
+    rng = np.random.default_rng(seed)
+    losses, errors = model_fleet(X, y, n_models, n_features, train_size, rng)
+    config = ScenarioConfig(n_streams=n_models, n_steps=len(y) - train_size, phi=np.nan, rho=np.nan, drift_fraction=np.nan)
+    sc = _scenario(losses, errors, np.full((n_models, 1), NO_CHANGE), config, offset=train_size)
+    sc.drift_kind = np.full(n_models, label, dtype=object)
+    return sc
+
+
+def covertype_scenario(n_models=50, n_features=10, train_size=5000, n_rows=100_000, seed=0) -> Scenario:
+    """Forest Covertype (Blackard, 1998) in its original order, no drift labels.
+
+    Needs scikit-learn (``fetch_covtype`` downloads the data on first use).
+    """
+    from sklearn.datasets import fetch_covtype
+
+    X, y = fetch_covtype(return_X_y=True)
+    return _fleet_scenario(X[:n_rows].astype(float), y[:n_rows], n_models, n_features, train_size, seed, "covertype")
+
+
+def airlines_scenario(n_models=50, n_features=6, train_size=5000, n_rows=100_000, seed=0) -> Scenario:
+    """Airlines delay data (OpenML 1169) in time order, no drift labels.
+
+    Numeric columns plus a one-hot airline code; the high-cardinality airport codes
+    are dropped. Needs scikit-learn (``fetch_openml`` downloads the data on first use).
+    """
+    from sklearn.datasets import fetch_openml
+
+    frame = fetch_openml(data_id=1169, as_frame=True, parser="auto").frame.iloc[:n_rows]
+    numeric = frame[["DayOfWeek", "Time", "Length"]].astype(float).to_numpy()
+    airline = frame["Airline"].astype(str).to_numpy()
+    codes = np.unique(airline)
+    onehot = (airline[:, None] == codes[None, :]).astype(float)
+    X = np.hstack([numeric, onehot])
+    y = frame["Delay"].astype(int).to_numpy()
+    return _fleet_scenario(X, y, n_models, n_features, train_size, seed, "airlines")
