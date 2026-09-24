@@ -17,6 +17,7 @@ from .online_fdr import (
     Uncorrected,
     make_procedure,
 )
+from .streaming import CalibratedDetector, StreamingMonitor, from_river
 from .streams import Scenario, ScenarioConfig, make_scenario
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "AlphaInvesting",
     "BHWindow",
     "BatchBH",
+    "CalibratedDetector",
     "BonferroniWindow",
     "CalibrationConfig",
     "Detector",
@@ -40,10 +42,12 @@ __all__ = [
     "Scenario",
     "ScenarioConfig",
     "StoreyBHWindow",
+    "StreamingMonitor",
     "Uncorrected",
     "calibrate",
     "calibrate_many",
     "default_detectors",
+    "from_river",
     "make_procedure",
     "make_scenario",
     "run_monitor",
