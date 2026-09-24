@@ -235,3 +235,34 @@ def airlines_scenario(n_models=50, n_features=6, train_size=5000, n_rows=100_000
     X = np.hstack([numeric, onehot])
     y = frame["Delay"].astype(int).to_numpy()
     return _fleet_scenario(X, y, n_models, n_features, train_size, seed, "airlines")
+
+
+def airlines_hourly_scenario(n_models=50, n_features=6, seed=0) -> Scenario:
+    """All 31 days of Airlines, 0/1 delay errors averaged per (day, hour) bucket.
+
+    Models are trained on the first day. A step is one hour, so a window of 24
+    steps covers a full daily cycle. Days are counted from changes of DayOfWeek.
+    """
+    from sklearn.datasets import fetch_openml
+
+    from .preprocess import bucket_means
+
+    frame = fetch_openml(data_id=1169, as_frame=True, parser="auto").frame
+    dow = frame["DayOfWeek"].astype(int).to_numpy()
+    day = np.concatenate([[0], np.cumsum(dow[1:] != dow[:-1])])
+    hour = (frame["Time"].astype(float).to_numpy() // 60).astype(int).clip(0, 23)
+    numeric = frame[["DayOfWeek", "Time", "Length"]].astype(float).to_numpy()
+    airline = frame["Airline"].astype(str).to_numpy()
+    onehot = (airline[:, None] == np.unique(airline)[None, :]).astype(float)
+    X = np.hstack([numeric, onehot])
+    y = frame["Delay"].astype(int).to_numpy()
+    train_size = int(np.sum(day == 0))
+    rng = np.random.default_rng(seed)
+    _, errors = model_fleet(X, y, n_models, n_features, train_size, rng)
+    bucket = (day * 24 + hour)[train_size:]
+    bucket = bucket - bucket.min()
+    rates = bucket_means(errors[:, train_size:], bucket)
+    config = ScenarioConfig(n_streams=n_models, n_steps=rates.shape[1], phi=np.nan, rho=np.nan, drift_fraction=np.nan)
+    sc = _scenario(rates, rates, np.full((n_models, 1), NO_CHANGE), config)
+    sc.drift_kind = np.full(n_models, "airlines-hourly", dtype=object)
+    return sc

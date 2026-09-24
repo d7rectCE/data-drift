@@ -47,3 +47,11 @@ def test_forward_error_and_material_null():
     # the spike window is null (it passes by itself), the start of the lasting rise is not
     assert sc.is_null([0], 0, 1100, ref_len=300, window=100)[0]
     assert not sc.is_null([0], 0, 2600, ref_len=300, window=100)[0]
+
+
+def test_bucket_means_and_tolerance():
+    from driftfdr import bucket_means, tolerance_from_cost
+
+    v = np.array([[1.0, 3.0, 5.0, 7.0]])
+    assert bucket_means(v, np.array([0, 0, 2, 2]), 3).tolist() == [[2.0, 2.0, 6.0]]  # empty bucket 1 carried
+    assert tolerance_from_cost(10.0, 200) == 0.05
