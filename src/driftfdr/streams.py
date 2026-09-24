@@ -75,6 +75,8 @@ class Scenario:
     """Optional level used for the reference side of the oracle comparison (defaults to ``truth``)."""
     mean_shift: np.ndarray | None = field(default=None, repr=False)
     """True mean shift of every stream (synthetic scenarios only)."""
+    features: np.ndarray | None = field(default=None, repr=False)
+    """Model input of every stream, for detectors that watch p(X) (supervised scenarios)."""
 
     def with_material_null(
         self, tolerance: float, truth: np.ndarray | None = None, truth_ref: np.ndarray | None = None
@@ -114,6 +116,8 @@ class Scenario:
     def signal(self, kind: str) -> np.ndarray:
         if kind == "values":
             return self.values
+        if kind == "features":
+            return self.features
         if kind == "errors":
             return self.errors
         raise ValueError(f"unknown signal kind {kind!r}")
@@ -215,3 +219,95 @@ def make_scenario(config: ScenarioConfig, seed: int = 0) -> Scenario:
     values = latent + shift
     errors = (values > stats.norm.isf(config.base_error_rate)).astype(np.int8)
     return Scenario(config, values, errors, change_start, change_end, kind, event, mean_shift=shift)
+
+
+SUPERVISED_KINDS = ("virtual", "real", "both", "cyclic")
+
+
+@dataclass(frozen=True)
+class SupervisedConfig:
+    """Streams of a feature, a label and a fixed linear model ``y_hat = beta0 * x``.
+
+    ``virtual`` drift shifts the mean of x (p(X) changes, the model stays right);
+    ``real`` drift changes the slope (p(y|X) changes, the error rises);
+    ``both`` does both at once; ``cyclic`` switches the slope back and forth every
+    ``period`` steps after the onset (a recurring concept).
+    """
+
+    n_streams: int = 100
+    n_steps: int = 5000
+    phi: float = 0.5
+    rho: float = 0.0
+    drift_fraction: float = 0.6
+    kinds: tuple[str, ...] = ("virtual", "real", "both")
+    feature_shift: float = 1.0
+    """Shift of the feature mean for virtual drift, in feature standard deviations."""
+    slope_change: float = 0.5
+    """Change of the slope for real drift (the model slope is 1, noise sd is 1)."""
+    period: int = 1000
+    onset_range: tuple[float, float] = (0.3, 0.6)
+    error_quantile: float = 0.8
+    """0/1 errors mark squared residuals above this quantile of the pre-drift residual."""
+
+
+def make_supervised_scenario(config: SupervisedConfig, seed: int = 0) -> Scenario:
+    """Scenario whose ``values`` are squared residuals of the model and ``features`` the input x.
+
+    Ground truth: ``mean_shift`` holds the true expected loss increase, so
+    ``with_material_null`` judges alarms by model degradation; change points mark
+    every change of p(X) or p(y|X) for the regime null.
+    """
+    for k in config.kinds:
+        if k not in SUPERVISED_KINDS:
+            raise ValueError(f"unknown drift kind {k!r}")
+    rng = np.random.default_rng(seed)
+    n, T = config.n_streams, config.n_steps
+    x = ar1_latent(n, T, config.phi, config.rho, rng)
+    noise = ar1_latent(n, T, config.phi, 0.0, rng)
+    x_shift = np.zeros((n, T))
+    slope = np.ones((n, T))
+    n_drift = int(round(config.drift_fraction * n))
+    drifting = rng.choice(n, size=n_drift, replace=False)
+    kind = np.full(n, "none", dtype=object)
+    lo, hi = int(config.onset_range[0] * T), int(config.onset_range[1] * T)
+    changes = [[] for _ in range(n)]
+    for i, k in enumerate(drifting):
+        kind_k = config.kinds[i % len(config.kinds)]
+        tau = int(rng.integers(lo, hi))
+        kind[k] = kind_k
+        if kind_k in ("virtual", "both"):
+            x_shift[k, tau:] = config.feature_shift
+        if kind_k in ("real", "both"):
+            slope[k, tau:] = 1.0 + config.slope_change
+        if kind_k == "cyclic":
+            on = ((np.arange(tau, T) - tau) // config.period) % 2 == 0
+            slope[k, tau:] = np.where(on, 1.0 + config.slope_change, 1.0)
+            changes[k] = list(range(tau, T, config.period))
+        else:
+            changes[k] = [tau]
+    feat = x + x_shift
+    y = slope * feat + noise
+    resid = y - feat  # model slope is 1
+    loss = resid**2
+    # expected loss: E[(slope-1)^2 x^2] + 1, with E[x^2] = 1 + shift^2
+    expected = (slope - 1.0) ** 2 * (1.0 + x_shift**2) + 1.0
+    threshold = np.quantile(noise**2, config.error_quantile)
+    errors = (loss > threshold).astype(np.int8)
+    m = max(len(c) for c in changes) if n_drift else 1
+    cs = np.full((n, m), NO_CHANGE, dtype=np.int64)
+    for k, c in enumerate(changes):
+        cs[k, : len(c)] = c
+    later = np.stack([cs[:, 1:], cs[:, 1:]], axis=-1) if m > 1 else None
+    sc = Scenario(
+        ScenarioConfig(n_streams=n, n_steps=T, phi=config.phi, rho=config.rho, drift_fraction=config.drift_fraction),
+        loss,
+        errors,
+        change_start=cs[:, 0].copy(),
+        change_end=cs[:, 0].copy(),
+        drift_kind=kind,
+        event=np.full(n, -1, dtype=np.int64),
+        later_changes=later,
+        mean_shift=expected - 1.0,
+    )
+    sc.features = feat
+    return sc

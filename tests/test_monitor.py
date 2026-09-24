@@ -117,3 +117,18 @@ def test_drift_events_shift_groups_together():
 def test_window_fdp_is_reported(scenario):
     s = summarize(run_monitor(scenario, PageHinkley(), Uncorrected(0.2), CONFIG))
     assert 0 <= s["window_fdp"] <= s["p_any_false_alarm_per_window"]
+
+
+def test_supervised_scenario_separates_virtual_and_real_drift():
+    from driftfdr import SupervisedConfig, make_supervised_scenario
+
+    sc = make_supervised_scenario(SupervisedConfig(n_streams=40, kinds=("virtual", "real", "cyclic")), seed=3)
+    for kind, loss_up, x_up in (("virtual", False, True), ("real", True, False)):
+        k = np.flatnonzero(sc.drift_kind == kind)[0]
+        tau = sc.change_start[k]
+        assert (sc.values[k, tau:].mean() - sc.values[k, :tau].mean() > 0.15) == loss_up
+        assert (sc.features[k, tau:].mean() - sc.features[k, :tau].mean() > 0.5) == x_up
+        assert (sc.mean_shift[k, -1] > 0) == loss_up
+    k = np.flatnonzero(sc.drift_kind == "cyclic")[0]
+    cs, _ = sc.changes()
+    assert (cs[k] < 10**9).sum() >= 2

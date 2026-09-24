@@ -18,7 +18,7 @@ from .online_fdr import (
     make_procedure,
 )
 from .streaming import CalibratedDetector, StreamingMonitor, from_river
-from .streams import Scenario, ScenarioConfig, make_scenario
+from .streams import Scenario, ScenarioConfig, SupervisedConfig, make_scenario, make_supervised_scenario
 
 __all__ = [
     "ADWIN",
@@ -44,6 +44,7 @@ __all__ = [
     "ScenarioConfig",
     "StoreyBHWindow",
     "StreamingMonitor",
+    "SupervisedConfig",
     "Uncorrected",
     "calibrate",
     "calibrate_many",
@@ -51,6 +52,7 @@ __all__ = [
     "from_river",
     "make_procedure",
     "make_scenario",
+    "make_supervised_scenario",
     "run_monitor",
     "summarize",
 ]
