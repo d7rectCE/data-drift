@@ -8,6 +8,7 @@ from driftfdr.online_fdr import (
     AlphaInvesting,
     BatchBH,
     BHWindow,
+    EBHWindow,
     LORDpp,
     StoreyBHWindow,
     Uncorrected,
@@ -142,3 +143,21 @@ def test_window_procedures_control_fdr_within_each_batch_only(cls):
     assert per_batch <= 0.1 + 0.01
     # the FDP pooled over batches is not what they control, and it is higher
     assert overall > per_batch
+
+
+def test_ebh_controls_fdr_under_strong_positive_dependence():
+    rng = np.random.default_rng(11)
+    fdps = []
+    for _ in range(400):
+        alt = rng.random(50) < 0.1
+        common = rng.normal()
+        z = np.sqrt(0.9) * common + np.sqrt(0.1) * rng.normal(size=50) + 3.5 * alt
+        rej = EBHWindow(0.1).decide(stats.norm.sf(z), rng)
+        fdps.append((rej & ~alt).sum() / max(rej.sum(), 1))
+    assert np.mean(fdps) <= 0.1
+
+
+def test_ebh_rejects_only_when_evidence_is_strong():
+    p = np.array([1e-8, 1e-7, 0.3, 0.8])
+    assert EBHWindow(0.05).decide(p, None).tolist() == [True, True, False, False]
+    assert not EBHWindow(0.05).decide(np.array([0.01, 0.02]), None).any()

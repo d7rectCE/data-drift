@@ -115,6 +115,35 @@ class StoreyBHWindow(Procedure):
         return benjamini_hochberg(p, self.alpha / pi0) & (p <= self.lam)
 
 
+class EBHWindow(Procedure):
+    """e-BH within each window (Wang & Ramdas, 2022): FDR control under any dependence.
+
+    p-values are turned into e-values by the calibrator ``e = kappa * p^(kappa - 1)``,
+    which integrates to one over a uniform p, and the ``k`` largest e-values are
+    rejected with ``k = max{k : e_(k) >= m / (alpha k)}``. Unlike BH it needs no
+    assumption on how the streams depend on each other, at a price in power.
+    """
+
+    name = "e_bh"
+
+    def __init__(self, alpha: float = 0.05, kappa: float = 0.5):
+        super().__init__(alpha)
+        self.kappa = kappa
+
+    def decide(self, values, rng):
+        p = np.clip(np.asarray(values, dtype=float), 1e-300, 1.0)
+        m = p.size
+        if m == 0:
+            return np.zeros(0, dtype=bool)
+        e = self.kappa * p ** (self.kappa - 1.0)
+        order = np.argsort(-e)
+        ok = np.flatnonzero(e[order] >= m / (self.alpha * np.arange(1, m + 1)))
+        rejected = np.zeros(m, dtype=bool)
+        if ok.size:
+            rejected[order[: ok[-1] + 1]] = True
+        return rejected
+
+
 class BatchBH(Procedure):
     """BH inside each window at levels that control FDR across all windows.
 
@@ -300,6 +329,7 @@ PROCEDURES = {
         BonferroniWindow,
         BHWindow,
         StoreyBHWindow,
+        EBHWindow,
         BatchBH,
         LOND,
         LORDpp,
