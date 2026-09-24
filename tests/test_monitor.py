@@ -14,7 +14,7 @@ from driftfdr import (
     summarize,
 )
 
-CONFIG = MonitorConfig(n_ref=200, window=100, calibration=CalibrationConfig(n_boot=100))
+CONFIG = MonitorConfig(n_ref=200, window=100, horizon=3, calibration=CalibrationConfig(n_boot=100))
 
 
 @pytest.fixture(scope="module")
@@ -66,3 +66,10 @@ def test_raw_threshold_needs_no_calibration(scenario):
     result = run_monitor(scenario, PageHinkley(), RawThreshold(50.0), CONFIG)
     assert result.tests["pvalue"].isna().all()
     assert np.isfinite(summarize(result)["fdp"])
+
+
+def test_lookback_grows_up_to_horizon(scenario):
+    tests = run_monitor(scenario, PageHinkley(), None, CONFIG).tests
+    first = tests[tests["stream"] == 0]["windows_seen"].to_numpy()
+    assert first[:4].tolist() == [1, 2, 3, 3]
+    assert not tests["rejected"].any()

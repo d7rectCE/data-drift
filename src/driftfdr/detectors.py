@@ -16,7 +16,9 @@ on a fixed geometric grid of split points instead of the exponential histogram.
 
 All ``scores`` methods take an array of shape ``(n_series, n_steps)`` and
 return an array of the same shape, so thousands of bootstrap replicates are
-scored in one call.
+scored in one call. Scores are causal: the score at step ``t`` only uses data
+up to ``t``, so one pass over a long series yields the statistics of all its
+prefixes.
 """
 
 from __future__ import annotations
@@ -40,15 +42,21 @@ class Detector(ABC):
     def scores(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError
 
-    def window_statistic(self, x: np.ndarray, n_ref: int) -> np.ndarray:
-        """Test statistic for "window differs from reference".
+    def window_statistics(self, x: np.ndarray, n_ref: int, window: int) -> np.ndarray:
+        """Test statistics for "data after the reference differ from it".
 
-        ``x`` holds the reference in its first ``n_ref`` columns and the window
-        under test after it. The detector is warmed up on the reference and the
-        statistic is the maximum score reached inside the window.
+        ``x`` holds the reference in its first ``n_ref`` columns followed by
+        ``n`` windows of ``window`` steps. The detector is warmed up on the
+        reference and run over the windows; column ``i`` of the result is the
+        maximum score reached inside window ``i``, shape ``(n_series, n)``.
         """
         x = np.atleast_2d(np.asarray(x, dtype=float))
-        return self.scores(x)[:, n_ref:].max(axis=1)
+        n = (x.shape[1] - n_ref) // window
+        s = self._window_scores(x, n_ref)[:, : n * window]
+        return s.reshape(x.shape[0], n, window).max(axis=2)
+
+    def _window_scores(self, x: np.ndarray, n_ref: int) -> np.ndarray:
+        return self.scores(x)[:, n_ref:]
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
@@ -170,9 +178,8 @@ class ADWIN(Detector):
     def scores(self, x: np.ndarray) -> np.ndarray:
         return self._scores_from(np.atleast_2d(np.asarray(x, dtype=float)), 1)
 
-    def window_statistic(self, x: np.ndarray, n_ref: int) -> np.ndarray:
-        x = np.atleast_2d(np.asarray(x, dtype=float))
-        return self._scores_from(x, n_ref + 1).max(axis=1)
+    def _window_scores(self, x: np.ndarray, n_ref: int) -> np.ndarray:
+        return self._scores_from(x, n_ref + 1)
 
     def _scores_from(self, x: np.ndarray, first_width: int) -> np.ndarray:
         """Scores for window widths ``first_width..T``; column ``i`` is width ``first_width + i``."""
@@ -205,9 +212,11 @@ class ADWIN(Detector):
 
 
 class KSWindow(Detector):
-    """Two-sample Kolmogorov–Smirnov statistic between reference and window.
+    """Two-sample Kolmogorov–Smirnov statistic between the reference and recent data.
 
-    The default threshold is the asymptotic 5% critical value that assumes
+    The statistic for window ``i`` compares the reference with everything from
+    the end of the reference up to the end of that window. The default
+    threshold is the asymptotic 5% critical value for a single window under
     i.i.d. observations, i.e. what ``scipy.stats.ks_2samp`` would use.
     """
 
@@ -227,9 +236,13 @@ class KSWindow(Detector):
         en = round(n_ref * window / (n_ref + window))
         return stats.kstwo.sf(statistic, en)
 
-    def window_statistic(self, x: np.ndarray, n_ref: int) -> np.ndarray:
+    def window_statistics(self, x: np.ndarray, n_ref: int, window: int) -> np.ndarray:
         x = np.atleast_2d(np.asarray(x, dtype=float))
-        return ks_statistic(x[:, :n_ref], x[:, n_ref:])
+        n = (x.shape[1] - n_ref) // window
+        ref = x[:, :n_ref]
+        return np.stack(
+            [ks_statistic(ref, x[:, n_ref : n_ref + (i + 1) * window]) for i in range(n)], axis=1
+        )
 
 
 def ks_statistic(a: np.ndarray, b: np.ndarray) -> np.ndarray:

@@ -53,10 +53,20 @@ def test_adwin_close_to_river():
         assert river_alarm - 64 <= ours <= river_alarm + 32
 
 
-def test_adwin_window_statistic_matches_full_scores():
-    x = np.random.default_rng(3).normal(size=(4, 400))
+def test_adwin_window_statistics_match_full_scores():
+    x = np.random.default_rng(3).normal(size=(4, 500))
     det = ADWIN()
-    assert np.allclose(det.window_statistic(x, 300), det.scores(x)[:, 300:].max(axis=1))
+    full = det.scores(x)[:, 300:].reshape(4, 2, 100).max(axis=2)
+    assert np.allclose(det.window_statistics(x, 300, 100), full)
+
+
+def test_window_statistics_are_prefix_consistent():
+    """Statistics of a prefix equal the leading columns for the full series."""
+    x = np.random.default_rng(6).normal(size=(3, 600))
+    for det in (PageHinkley(), ADWIN(), KSWindow()):
+        full = det.window_statistics(x, 300, 100)
+        assert full.shape == (3, 3)
+        assert np.allclose(det.window_statistics(x[:, :400], 300, 100)[:, 0], full[:, 0])
 
 
 def test_score_is_monotone_in_sensitivity():

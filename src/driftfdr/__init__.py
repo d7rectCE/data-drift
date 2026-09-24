@@ -3,7 +3,7 @@
 from .calibration import CalibrationConfig, NullDistribution, calibrate, calibrate_many
 from .detectors import ADWIN, DDM, Detector, KSWindow, PageHinkley, default_detectors
 from .metrics import summarize
-from .monitor import MonitorConfig, MonitorResult, null_pvalues, run_monitor
+from .monitor import MonitorConfig, MonitorResult, run_monitor
 from .online_fdr import (
     LOND,
     SAFFRON,
@@ -42,7 +42,6 @@ __all__ = [
     "default_detectors",
     "make_procedure",
     "make_scenario",
-    "null_pvalues",
     "run_monitor",
     "summarize",
 ]

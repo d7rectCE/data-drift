@@ -38,6 +38,8 @@ class ScenarioConfig:
     gradual_length: int = 300
     onset_range: tuple[float, float] = (0.3, 0.8)
     """Onsets are drawn uniformly from this fraction range of ``n_steps``."""
+    fixed_onset: int | None = None
+    """If set, every drifting stream changes at this step instead."""
     base_error_rate: float = 0.2
 
 
@@ -112,7 +114,7 @@ def make_scenario(config: ScenarioConfig, seed: int = 0) -> Scenario:
     n_drift = int(round(config.drift_fraction * n))
     lo, hi = int(config.onset_range[0] * T), int(config.onset_range[1] * T)
     for k in rng.choice(n, size=n_drift, replace=False):
-        tau = int(rng.integers(lo, hi))
+        tau = config.fixed_onset if config.fixed_onset is not None else int(rng.integers(lo, hi))
         kind_k = config.drift_type
         if kind_k == "mixed":
             kind_k = str(rng.choice(["abrupt", "gradual"]))

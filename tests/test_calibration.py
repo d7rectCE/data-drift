@@ -3,7 +3,7 @@ import pytest
 
 from driftfdr.calibration import CalibrationConfig, NullDistribution, calibrate, fit_tail
 from driftfdr.detectors import PageHinkley
-from driftfdr.monitor import MonitorConfig, null_pvalues
+from driftfdr.monitor import MonitorConfig, run_monitor
 from driftfdr.streams import ScenarioConfig, make_scenario
 
 
@@ -35,11 +35,13 @@ def test_tail_fit_on_exponential_samples(model):
     assert prob == pytest.approx(0.1)
 
 
-def test_calibrate_returns_null_distribution():
+def test_calibrate_returns_one_null_per_horizon():
     x = np.random.default_rng(2).normal(size=300)
-    null = calibrate(PageHinkley(), x, 100, CalibrationConfig(n_boot=100), seed=0)
-    assert null.samples.size == 100
-    assert np.all(np.diff(null.samples) >= 0)
+    nulls = calibrate(PageHinkley(), x, 100, horizon=3, config=CalibrationConfig(n_boot=100))
+    assert len(nulls) == 3
+    assert all(n.samples.size == 100 and np.all(np.diff(n.samples) >= 0) for n in nulls)
+    # Page-Hinkley accumulates evidence, so later windows have larger null statistics
+    assert np.median(nulls[2].samples) > np.median(nulls[0].samples)
 
 
 @pytest.mark.parametrize("method", ["moving", "sieve"])
@@ -47,9 +49,8 @@ def test_pvalues_roughly_uniform_on_stationary_streams(method):
     sc = make_scenario(
         ScenarioConfig(n_streams=300, n_steps=800, phi=0.0, rho=0.0, drift_fraction=0.0), seed=3
     )
-    cfg = MonitorConfig(calibration=CalibrationConfig(n_boot=200, method=method))
-    df = null_pvalues(sc, PageHinkley(), cfg)
-    p = df["pvalue"].to_numpy()
+    cfg = MonitorConfig(horizon=3, calibration=CalibrationConfig(n_boot=200, method=method))
+    p = run_monitor(sc, PageHinkley(), None, cfg).tests["pvalue"].to_numpy()
     assert p.min() > 0 and p.max() <= 1
     assert 0.02 < np.mean(p <= 0.05) < 0.09
     assert 0.40 < np.mean(p <= 0.5) < 0.60
