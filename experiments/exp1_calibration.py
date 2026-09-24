@@ -131,15 +131,16 @@ def plot_calibration(df: pd.DataFrame):
                 ax.set_ylabel(f"φ = {phi:g}\nфактический FAR")
             if i == len(PHIS) - 1:
                 ax.set_xlabel("номинальный уровень α")
+    fig.tight_layout(rect=(0, 0.02, 1, 0.93))
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 1.03))
+    fig.legend(handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 0.965))
     fig.suptitle(
         "Доля ложных тревог калиброванных p-значений на стационарных потоках (серая линия: FAR = α)",
-        y=1.07,
+        y=0.995,
         fontsize=12,
         fontweight="bold",
     )
-    fig.text(0.5, -0.01, "DDM работает на бинарном сигнале ошибок, AR-sieve для него неприменим", ha="center", color=TEXT_2, fontsize=8.5)
+    fig.text(0.5, 0.005, "DDM работает на бинарном сигнале ошибок, AR-sieve для него неприменим", ha="center", color=TEXT_2, fontsize=8.5)
     savefig(fig, "exp1_calibration.png")
 
 
@@ -171,6 +172,12 @@ def plot_benchmark(df: pd.DataFrame):
     axes[0].legend(loc="upper left")
     fig.suptitle("Сравнение детекторов при своих порогах и при едином FAR (φ = 0.5)", y=1.04, fontsize=12, fontweight="bold")
     savefig(fig, "exp1_benchmark.png")
+
+
+def replot():
+    setup_style()
+    plot_calibration(pd.read_csv(RESULTS / "exp1_calibration.csv"))
+    plot_benchmark(pd.read_csv(RESULTS / "exp1_benchmark.csv"))
 
 
 def main():
