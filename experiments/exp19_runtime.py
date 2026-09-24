@@ -10,7 +10,9 @@ the model; binary errors cost the same).
 * Monitoring: time per step per model after calibration, amortised over window
   ends, against the uncalibrated ``river`` detectors.
 * Scaling: ``StreamingMonitor`` with 10, 100 and 1000 models, with and without
-  ``split_common``: total calibration time and time per step for the whole fleet.
+  ``split_common``: total calibration time and time per step for the whole fleet
+  (independent streams without drift; a step that ends in an alarm also pays
+  for the recalibration, counted separately).
 * Other tools (only if installed): one Evidently ``ValueDrift`` report per window
   and one NannyML ``PerformanceCalculator`` per model, as in experiment 17.
 
@@ -93,9 +95,12 @@ def river_update(n_steps: int) -> pd.DataFrame:
 
 def fleet_scaling(sizes, n_steps: int) -> pd.DataFrame:
     rows = []
+    warm = StreamingMonitor(5, PageHinkley, n_ref=N_REF, window=WINDOW, horizon=HORIZON)  # first-call overheads
+    for v in np.random.default_rng(0).normal(size=(N_REF + 2 * WINDOW, 5)):
+        warm.update(v)
     for k in sizes:
         rng = np.random.default_rng(k)
-        x = rng.normal(size=(N_REF + n_steps, k)) + rng.normal(size=(N_REF + n_steps, 1))
+        x = rng.normal(size=(N_REF + n_steps, k))  # no drift, so step times rarely include a recalibration
         for split in (False, True):
             mon = StreamingMonitor(k, PageHinkley, "bonferroni", 0.05, n_ref=N_REF, window=WINDOW,
                                    horizon=HORIZON, split_common=split)
@@ -103,11 +108,12 @@ def fleet_scaling(sizes, n_steps: int) -> pd.DataFrame:
             for t in range(N_REF):
                 mon.update(x[t])
             cal = time.perf_counter() - t0
+            retrains = 0
             t0 = time.perf_counter()
             for t in range(N_REF, N_REF + n_steps):
-                mon.update(x[t])
+                retrains += len(mon.update(x[t])) + mon.fleet_alarm
             step = (time.perf_counter() - t0) / n_steps
-            rows.append({"models": k, "split_common": split, "calibration_total_s": cal,
+            rows.append({"models": k, "split_common": split, "calibration_total_s": cal, "recalibrations": retrains,
                          "ms_per_step_all_models": step * 1e3, "us_per_step_per_model": step / k * 1e6})
     return pd.DataFrame(rows)
 
