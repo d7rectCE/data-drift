@@ -103,3 +103,16 @@ def test_meanshift_ignores_one_window_spike_but_not_lasting_rise():
     y = np.zeros((1, 800))
     y[0, 500:] = 0.5  # lasting rise from window 2
     assert MeanShift(3).window_statistics(y, 300, 100)[0, -1] == 0.5
+
+
+def test_ks_sliding_is_prefix_consistent_and_sees_short_changes():
+    from driftfdr.detectors import KSSliding
+
+    rng = np.random.default_rng(12)
+    x = rng.normal(size=(2, 800))
+    det = KSSliding(width=100, stride=10)
+    full = det.window_statistics(x, 300, 100)
+    assert np.allclose(det.window_statistics(x[:, :500], 300, 100), full[:, :2])
+    y = x.copy()
+    y[:, 650:750] += 2.0  # short change inside window 3
+    assert np.all(det.window_statistics(y, 300, 100)[:, 3] > full[:, 3])

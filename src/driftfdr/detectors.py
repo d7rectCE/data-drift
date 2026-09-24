@@ -245,6 +245,37 @@ class KSWindow(Detector):
         )
 
 
+class KSSliding(Detector):
+    """Sequential KS in the spirit of IKS (dos Reis et al., 2016).
+
+    The reference is compared with a sliding window of the last ``width``
+    observations every ``stride`` steps; the statistic of a check window is the
+    largest KS distance reached inside it. Unlike ``KSWindow`` it forgets old
+    data, so a short-lived change is not diluted by a long look-back.
+    """
+
+    name = "KS-sliding"
+
+    def __init__(self, width: int = 100, stride: int = 10, alpha: float = 0.05, n_ref: int = 300):
+        self.width, self.stride, self.alpha, self.n_ref = width, stride, alpha, n_ref
+
+    @property
+    def default_threshold(self) -> float:
+        en = round(self.n_ref * self.width / (self.n_ref + self.width))
+        return float(stats.kstwo.isf(self.alpha, en))
+
+    def window_statistics(self, x: np.ndarray, n_ref: int, window: int) -> np.ndarray:
+        x = np.atleast_2d(np.asarray(x, dtype=float))
+        n = (x.shape[1] - n_ref) // window
+        ref = x[:, :n_ref]
+        out = np.zeros((x.shape[0], n))
+        for i in range(n):
+            for end in range(n_ref + i * window + self.stride, n_ref + (i + 1) * window + 1, self.stride):
+                start = max(n_ref, end - self.width)
+                out[:, i] = np.maximum(out[:, i], ks_statistic(ref, x[:, start:end]))
+        return out
+
+
 class MeanShift(Detector):
     """Persistent rise of the mean: the smallest window-mean excess over the last ``persistence`` windows.
 
