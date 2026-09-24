@@ -17,7 +17,7 @@ Two views of the same latent process are exposed:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy import signal, stats
@@ -61,6 +61,16 @@ class Scenario:
     drift_kind: np.ndarray
     event: np.ndarray
     """Drift event of each stream, -1 for sporadic changes and stable streams."""
+    later_changes: np.ndarray | None = field(default=None)
+    """Optional ``(n_streams, m, 2)`` array of further (start, end) changes after the first."""
+
+    def changes(self) -> tuple[np.ndarray, np.ndarray]:
+        """All change starts and ends, shape ``(n_streams, n_changes)``, padded with ``NO_CHANGE``."""
+        cs, ce = self.change_start[:, None], self.change_end[:, None]
+        if self.later_changes is not None and self.later_changes.size:
+            cs = np.concatenate([cs, self.later_changes[:, :, 0]], axis=1)
+            ce = np.concatenate([ce, self.later_changes[:, :, 1]], axis=1)
+        return cs, ce
 
     @property
     def n_streams(self) -> int:
@@ -89,9 +99,10 @@ class Scenario:
         of the reference and the end of the window.
         """
         streams = np.asarray(streams)
-        return (np.asarray(stop) <= self.change_start[streams]) | (
-            np.asarray(start) >= self.change_end[streams]
-        )
+        cs, ce = self.changes()
+        start = np.asarray(start)[..., None] if np.ndim(start) else start
+        stop = np.asarray(stop)[..., None] if np.ndim(stop) else stop
+        return np.all((stop <= cs[streams]) | (start >= ce[streams]), axis=-1)
 
 
 def ar1_latent(n_streams: int, n_steps: int, phi: float, rho: float, rng) -> np.ndarray:

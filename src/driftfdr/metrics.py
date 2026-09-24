@@ -16,6 +16,7 @@ from __future__ import annotations
 import numpy as np
 
 from .monitor import MonitorResult
+from .streams import NO_CHANGE
 
 
 def summarize(result: MonitorResult) -> dict:
@@ -32,18 +33,22 @@ def summarize(result: MonitorResult) -> dict:
     monitored_steps = n_streams * (n_steps - result.config.n_ref)
 
     alarms = tests.loc[rejected, ["stream", "t_end"]]
-    first_alarm = {}
+    alarm_times = {k: np.sort(g.to_numpy()) for k, g in alarms.groupby("stream")["t_end"]}
+    cs, _ = scenario.changes()
     delays, degraded = [], []
     for k in scenario.drifting:
-        onset = scenario.change_start[k]
-        after = alarms.loc[(alarms["stream"] == k) & (alarms["t_end"] > onset), "t_end"]
-        if after.empty:
-            degraded.append(n_steps - onset)
-        else:
-            first_alarm[k] = int(after.min())
-            delays.append(first_alarm[k] - onset)
-            degraded.append(first_alarm[k] - onset)
-    n_drifts = len(scenario.drifting)
+        onsets = np.sort(cs[k][cs[k] < NO_CHANGE])
+        times = alarm_times.get(k, np.array([], dtype=int))
+        for i, onset in enumerate(onsets):
+            # a change counts as caught by the first alarm after it and before the next change
+            until = onsets[i + 1] if i + 1 < len(onsets) else n_steps
+            hit = times[(times > onset) & (times <= until)]
+            if hit.size:
+                delays.append(hit[0] - onset)
+                degraded.append(hit[0] - onset)
+            else:
+                degraded.append(until - onset)
+    n_drifts = len(degraded)
 
     return {
         "n_tests": len(tests),
