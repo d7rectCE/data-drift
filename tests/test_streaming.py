@@ -95,3 +95,69 @@ def test_models_can_be_added_removed_and_report_irregularly():
     assert list(mon.models) == ["y"]
     with pytest.raises(KeyError):
         mon.update({"x": 0.0})
+
+
+def _common_factor_values(n=10, steps=1200, seed=0, shift_all_at=None):
+    rng = np.random.default_rng(seed)
+    common = np.cumsum(rng.normal(size=steps)) * 0.05 + rng.normal(size=steps)
+    x = 2.0 + 0.5 * np.arange(n)[:, None] + common + rng.normal(scale=0.5, size=(n, steps))
+    if shift_all_at is not None:
+        x[:, shift_all_at:] += 3.0
+    return x
+
+
+def test_split_common_matches_offline_residuals():
+    from driftfdr import split_common
+
+    x = _common_factor_values()
+    kw = dict(procedure="bonferroni", alpha=0.05, n_ref=200, window=100, horizon=3, calibration=CAL, seed=2)
+    split = StreamingMonitor(detector_factory=PageHinkley, n_models=10, split_common=True, **kw)
+    resid, common = split_common(x, 200)
+    plain = StreamingMonitor(detector_factory=PageHinkley, model_ids=[*range(10), StreamingMonitor.FLEET], **kw)
+    n_windows = 0
+    for t in range(x.shape[1]):
+        a = split.update(x[:, t])
+        b = plain.update({**{k: resid[k, t] for k in range(10)}, StreamingMonitor.FLEET: common[t]})
+        assert split.last_pvalues.keys() == plain.last_pvalues.keys()
+        for k, p in split.last_pvalues.items():
+            assert p == pytest.approx(plain.last_pvalues[k], abs=1e-9)
+        n_windows += bool(split.last_pvalues)
+        if len(a) or len(b) or split.fleet_alarm:
+            break
+    assert n_windows >= 5
+
+
+def test_split_common_flags_fleet_wide_shift_not_models():
+    x = _common_factor_values(n=20, steps=1500, seed=1, shift_all_at=900)
+    mon = StreamingMonitor(detector_factory=PageHinkley, n_models=20, split_common=True, alpha=0.05,
+                           n_ref=300, window=100, horizon=3, calibration=CAL)
+    fleet_steps, model_alarms = [], 0
+    for t in range(x.shape[1]):
+        model_alarms += len(mon.update(x[:, t]))
+        if mon.fleet_alarm:
+            fleet_steps.append(t)
+    assert fleet_steps and 900 <= fleet_steps[0] < 1300
+    assert model_alarms <= 2
+
+
+def test_split_common_requires_every_model_and_survives_save(tmp_path):
+    x = _common_factor_values(n=6, steps=900, seed=3)
+    ids = list("abcdef")
+    kw = dict(procedure="bh_window", alpha=0.3, n_ref=200, window=100, horizon=2, calibration=CAL, seed=4,
+              split_common=True)
+    mon = StreamingMonitor(detector_factory=PageHinkley, model_ids=ids, **kw)
+    with pytest.raises(ValueError):
+        mon.update({"a": 1.0})
+    straight = StreamingMonitor(detector_factory=PageHinkley, model_ids=ids, **kw)
+    first = _feed(straight, x, 0, 450, ids)
+    resumed = StreamingMonitor(detector_factory=PageHinkley, model_ids=ids, **kw)
+    assert _feed(resumed, x, 0, 450, ids) == first
+    resumed.reset_model("c")  # a retrained model re-estimates its scale
+    straight2 = StreamingMonitor(detector_factory=PageHinkley, model_ids=ids, **kw)
+    _feed(straight2, x, 0, 450, ids)
+    straight2.reset_model("c")
+    resumed.save(tmp_path / "split.npz")
+    loaded = StreamingMonitor.load(tmp_path / "split.npz", detector_factory=PageHinkley)
+    out_loaded = _feed(loaded, x, 450, 900, ids)
+    assert out_loaded == _feed(straight2, x, 450, 900, ids)
+    assert loaded.n_seen == straight2.n_seen and loaded._scale == straight2._scale

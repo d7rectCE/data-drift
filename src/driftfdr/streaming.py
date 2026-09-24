@@ -109,7 +109,26 @@ class StreamingMonitor:
 
     Models can be added and removed at any time, and the whole state saved to and
     restored from a file (``save`` / ``load``).
+
+    ``split_common=True`` is for fleets whose errors move together (shared data source,
+    shared features): a common fluctuation otherwise makes many models alarm at once,
+    and with ``"bh_window"`` these bursts dominate the false alarms (experiment 18). Each
+    model's values are standardised by the mean and standard deviation of its own
+    reference; the cross-sectional median of the standardised values is the common
+    component, and the detectors watch the residuals (value minus the median). The
+    common component gets its own calibrated detector, tested in the same family as the
+    models; when it alarms, ``fleet_alarm`` is set for that step: something shared by
+    all models has changed, which is better handled as an incident than by retraining
+    every model. A drift of the whole fleet is invisible in the residuals and is caught
+    only this way; the median assumes fewer than half of the models drift at once. In
+    this mode every monitored model must report at every step, and a retrained model
+    re-estimates its standardisation from its new reference.
+
+    After every ``update``, ``last_pvalues`` holds the p-values that became ready in that
+    call, keyed by model id (and ``StreamingMonitor.FLEET`` for the common component).
     """
+
+    FLEET = "__fleet__"
 
     def __init__(
         self,
@@ -123,6 +142,7 @@ class StreamingMonitor:
         calibration: CalibrationConfig = CalibrationConfig(),
         seed: int = 0,
         model_ids=None,
+        split_common: bool = False,
     ):
         if n_ref % window:
             raise ValueError("n_ref must be a multiple of window")
@@ -145,6 +165,16 @@ class StreamingMonitor:
             )
         self.models: dict = {}
         self.n_seen: dict = {}
+        self.split_common = split_common
+        self.fleet_alarm = False
+        self.last_pvalues: dict = {}
+        self.fleet: CalibratedDetector | None = None
+        self._step = 0  # synchronous steps seen (split_common only)
+        self._scale: dict = {}  # model_id -> (mean, sd) of its reference
+        self._pending: dict = {}  # model_id -> [(value, step)] while its reference is collected
+        self._common: dict = {}  # step -> common component (nan if no model was standardised)
+        if split_common:
+            self.fleet = self._new_detector(self.FLEET, 0)
         ids = list(model_ids) if model_ids is not None else list(range(n_models or 0))
         for model_id in ids:
             self.add_model(model_id)
@@ -157,20 +187,30 @@ class StreamingMonitor:
         """Start monitoring a new model; it first collects its reference."""
         if model_id in self.models:
             raise KeyError(f"model {model_id!r} is already monitored")
-        self.models[model_id] = CalibratedDetector(
-            self.detector_factory(), self.n_ref, self.window, self.horizon, self.calibration,
-            seed=self._seed(model_id, 0),
-        )
+        self.models[model_id] = self._new_detector(model_id, 0)
         self.n_seen[model_id] = 0
+        if self.split_common:
+            self._pending[model_id] = []
+
+    def _new_detector(self, model_id, ref_start) -> CalibratedDetector:
+        return CalibratedDetector(
+            self.detector_factory(), self.n_ref, self.window, self.horizon, self.calibration,
+            seed=self._seed(model_id, ref_start),
+        )
 
     def remove_model(self, model_id) -> None:
         """Stop monitoring a model and forget its state."""
         del self.models[model_id]
         del self.n_seen[model_id]
+        self._scale.pop(model_id, None)
+        self._pending.pop(model_id, None)
 
     def reset_model(self, model_id) -> None:
         """Call after retraining a model for any reason (alarmed models are reset automatically)."""
         self.models[model_id].reset(seed=self._seed(model_id, self.n_seen[model_id]))
+        if self.split_common:
+            self._scale.pop(model_id, None)
+            self._pending[model_id] = []
 
     def update(self, observations):
         """Feed new observations; return the models to retrain now.
@@ -181,20 +221,101 @@ class StreamingMonitor:
         """
         as_mapping = hasattr(observations, "items")
         items = observations.items() if as_mapping else enumerate(np.asarray(observations, dtype=float))
-        ready, pvals = [], []
-        for model_id, x in items:
-            p = self.models[model_id].update(x)
-            self.n_seen[model_id] += 1
-            if p is not None:
-                ready.append(model_id)
-                pvals.append(p)
+        if self.split_common:
+            ready, pvals = self._split_step(dict(items))
+        else:
+            ready, pvals = [], []
+            for model_id, x in items:
+                p = self.models[model_id].update(x)
+                self.n_seen[model_id] += 1
+                if p is not None:
+                    ready.append(model_id)
+                    pvals.append(p)
+        self.last_pvalues = dict(zip(ready, pvals))
+        self.fleet_alarm = False
         alarmed = []
         if ready:
             rejected = self.procedure.decide(np.array(pvals), self.rng)
             alarmed = [m for m, r in zip(ready, rejected) if r]
+            if self.FLEET in alarmed and self.split_common:
+                alarmed.remove(self.FLEET)
+                self.fleet_alarm = True
+                self.fleet.reset(seed=self._seed(self.FLEET, self._step))
             for model_id in alarmed:
                 self.reset_model(model_id)
         return alarmed if as_mapping else np.array(alarmed, dtype=int)
+
+    def _split_step(self, obs: dict):
+        """One synchronous step with the common component removed; returns (ids, p-values)."""
+        missing = set(self.models) - set(obs)
+        if missing:
+            raise ValueError(f"with split_common every model must report at every step; missing {sorted(map(str, missing))}")
+        for model_id in obs:
+            if model_id not in self.models:
+                raise KeyError(f"model {model_id!r} is not monitored")
+        t = self._step
+        self._step += 1
+        z = {m: (float(obs[m]) - mu) / sd for m, (mu, sd) in self._scale.items()}
+        common = float(np.median(list(z.values()))) if z else np.nan
+        self._common[t] = common
+        if np.isnan(common) and (self.fleet.calibrated or self.fleet._reference):
+            # the common component has a gap: its detector starts over
+            self.fleet.reset(seed=self._seed(self.FLEET, t))
+        feed = {m: [zm - common] for m, zm in z.items()}
+
+        completed = []
+        for m in obs:
+            self.n_seen[m] += 1
+            if m not in self._scale:
+                self._pending[m].append((float(obs[m]), t))
+                if len(self._pending[m]) == self.n_ref:
+                    completed.append(m)
+        fleet_steps = [t]
+        if completed:
+            residuals, gaps = self._standardise(completed)
+            feed.update(residuals)
+            fleet_steps = sorted(set(gaps) | {t})
+        for step in [s for s in self._common if s <= t - self.n_ref]:
+            del self._common[step]
+
+        ready, pvals = [], []
+        for m, residuals in feed.items():
+            p = None
+            for r in residuals:
+                p = self.models[m].update(r)
+            if p is not None:
+                ready.append(m)
+                pvals.append(p)
+        p = None
+        for step in fleet_steps:
+            if not np.isnan(self._common[step]):
+                q = self.fleet.update(self._common[step])
+                p = q if q is not None else p
+        if p is not None:
+            ready.append(self.FLEET)
+            pvals.append(p)
+        return ready, pvals
+
+    def _standardise(self, completed):
+        """Models whose reference just completed: fix their scale and fill gaps in the common component.
+
+        Returns the residuals of their reference steps and the steps whose common component was filled in.
+        """
+        raw = {m: np.array([x for x, _ in self._pending[m]]) for m in completed}
+        steps = {m: [s for _, s in self._pending[m]] for m in completed}
+        pos = {m: {s: i for i, s in enumerate(steps[m])} for m in completed}
+        for m in completed:
+            mu, sd = raw[m].mean(), raw[m].std()
+            self._scale[m] = (float(mu), float(sd) if sd > 0 else 1.0)
+        z = {m: (raw[m] - self._scale[m][0]) / self._scale[m][1] for m in completed}
+        gaps = sorted({s for m in completed for s in steps[m] if np.isnan(self._common[s])})
+        for s in gaps:  # no model was standardised then: the median over the models completing now
+            self._common[s] = float(np.median([z[m][pos[m][s]] for m in completed if s in pos[m]]))
+        out = {}
+        for m in completed:
+            out[m] = list(z[m] - np.array([self._common[s] for s in steps[m]]))
+            self._pending[m] = []
+        return out, gaps
 
     # --- persistence ---------------------------------------------------------
 
@@ -202,26 +323,15 @@ class StreamingMonitor:
         """Write the full state to an ``.npz`` file (arrays plus JSON metadata, no pickle)."""
         arrays, models = {}, []
         for i, (model_id, det) in enumerate(self.models.items()):
-            entry = {
-                "id": model_id,
-                "n_seen": self.n_seen[model_id],
-                "seed": det.seed,
-                "since_reference": det._since_reference,
-                "nulls": None,
-            }
-            arrays[f"m{i}_reference"] = np.asarray(det._reference, dtype=float)
-            arrays[f"m{i}_recent"] = np.asarray(det._recent, dtype=float)
-            if det._nulls is not None:
-                entry["nulls"] = []
-                for h, null in enumerate(det._nulls):
-                    arrays[f"m{i}_null{h}"] = null.samples
-                    entry["nulls"].append(
-                        {k: _plain(getattr(null, k)) for k in (
-                            "block_length", "min_exceedances", "tail_threshold", "tail_scale", "tail_shape", "tail_prob")}
-                    )
+            entry = {"id": model_id, "n_seen": self.n_seen[model_id], **_save_detector(det, f"m{i}", arrays)}
+            if self.split_common:
+                entry["scale"] = self._scale.get(model_id)
+                pending = self._pending[model_id]
+                arrays[f"m{i}_pending"] = np.array([x for x, _ in pending], dtype=float)
+                arrays[f"m{i}_pending_steps"] = np.array([s for _, s in pending], dtype=np.int64)
             models.append(entry)
         meta = {
-            "version": 1,
+            "version": 2,
             "alpha": self.alpha,
             "n_ref": self.n_ref,
             "window": self.window,
@@ -231,7 +341,14 @@ class StreamingMonitor:
             "procedure": {"name": self.procedure.name, "state": _plain(vars(self.procedure))},
             "rng": _plain(self.rng.bit_generator.state),
             "models": models,
+            "split_common": self.split_common,
         }
+        if self.split_common:
+            meta["step"] = self._step
+            meta["fleet"] = _save_detector(self.fleet, "fleet", arrays)
+            steps = sorted(self._common)
+            arrays["common_steps"] = np.array(steps, dtype=np.int64)
+            arrays["common"] = np.array([self._common[s] for s in steps], dtype=float)
         np.savez(path, meta=np.array(json.dumps(meta)), **arrays)
 
     @classmethod
@@ -242,11 +359,12 @@ class StreamingMonitor:
             arrays = {k: data[k] for k in data.files if k != "meta"}
         cal = CalibrationConfig(**meta["calibration"])
         proc_meta = meta["procedure"]
+        split = meta.get("split_common", False)
         mon = cls(
             detector_factory=detector_factory,
             procedure=procedure if procedure is not None else proc_meta["name"],
             alpha=meta["alpha"], n_ref=meta["n_ref"], window=meta["window"], horizon=meta["horizon"],
-            calibration=cal, seed=meta["seed"], model_ids=[],
+            calibration=cal, seed=meta["seed"], model_ids=[], split_common=split,
         )
         if procedure is None:
             for k, v in proc_meta["state"].items():
@@ -255,18 +373,46 @@ class StreamingMonitor:
         for i, entry in enumerate(meta["models"]):
             model_id = entry["id"]
             mon.add_model(model_id)
-            det = mon.models[model_id]
-            det.seed = entry["seed"]
-            det._reference = arrays[f"m{i}_reference"].tolist()
-            det._recent.extend(arrays[f"m{i}_recent"].tolist())
-            det._since_reference = entry["since_reference"]
+            _load_detector(mon.models[model_id], entry, f"m{i}", arrays)
             mon.n_seen[model_id] = entry["n_seen"]
-            if entry["nulls"] is not None:
-                det._nulls = [
-                    NullDistribution(samples=arrays[f"m{i}_null{h}"], **params)
-                    for h, params in enumerate(entry["nulls"])
-                ]
+            if split:
+                if entry["scale"] is not None:
+                    mon._scale[model_id] = tuple(entry["scale"])
+                mon._pending[model_id] = list(zip(arrays[f"m{i}_pending"].tolist(),
+                                                  arrays[f"m{i}_pending_steps"].tolist()))
+        if split:
+            mon._step = meta["step"]
+            _load_detector(mon.fleet, meta["fleet"], "fleet", arrays)
+            mon._common = dict(zip(arrays["common_steps"].tolist(), arrays["common"].tolist()))
         return mon
+
+
+def _save_detector(det: CalibratedDetector, prefix: str, arrays: dict) -> dict:
+    """Arrays of one calibrated detector go into ``arrays``; returns its JSON metadata."""
+    entry = {"seed": det.seed, "since_reference": det._since_reference, "nulls": None}
+    arrays[f"{prefix}_reference"] = np.asarray(det._reference, dtype=float)
+    arrays[f"{prefix}_recent"] = np.asarray(det._recent, dtype=float)
+    if det._nulls is not None:
+        entry["nulls"] = []
+        for h, null in enumerate(det._nulls):
+            arrays[f"{prefix}_null{h}"] = null.samples
+            entry["nulls"].append(
+                {k: _plain(getattr(null, k)) for k in (
+                    "block_length", "min_exceedances", "tail_threshold", "tail_scale", "tail_shape", "tail_prob")}
+            )
+    return _plain(entry)
+
+
+def _load_detector(det: CalibratedDetector, entry: dict, prefix: str, arrays: dict) -> None:
+    det.seed = entry["seed"]
+    det._reference = arrays[f"{prefix}_reference"].tolist()
+    det._recent.extend(arrays[f"{prefix}_recent"].tolist())
+    det._since_reference = entry["since_reference"]
+    if entry["nulls"] is not None:
+        det._nulls = [
+            NullDistribution(samples=arrays[f"{prefix}_null{h}"], **params)
+            for h, params in enumerate(entry["nulls"])
+        ]
 
 
 def _plain(obj):

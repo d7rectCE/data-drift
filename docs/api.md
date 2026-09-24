@@ -60,7 +60,7 @@ them. ``reset()`` starts a new reference, e.g. after retraining.
 ### `StreamingMonitor`
 
 ```python
-StreamingMonitor(n_models: int | None = None, detector_factory=None, procedure: Procedure | str = 'bonferroni', alpha: float = 0.05, n_ref: int = 300, window: int = 100, horizon: int = 5, calibration: CalibrationConfig = CalibrationConfig(n_boot=2000, method='sieve_pu', block_length='auto', tail='gpd', tail_fraction=0.1, min_exceedances=10, seed=12345, tolerance=0.0), seed: int = 0, model_ids=None)
+StreamingMonitor(n_models: int | None = None, detector_factory=None, procedure: Procedure | str = 'bonferroni', alpha: float = 0.05, n_ref: int = 300, window: int = 100, horizon: int = 5, calibration: CalibrationConfig = CalibrationConfig(n_boot=2000, method='sieve_pu', block_length='auto', tail='gpd', tail_fraction=0.1, min_exceedances=10, seed=12345, tolerance=0.0), seed: int = 0, model_ids=None, split_common: bool = False)
 ```
 
 One calibrated detector per model plus a rule that decides which models to retrain.
@@ -82,6 +82,23 @@ With delayed labels, pass a model's error when its label arrives.
 
 Models can be added and removed at any time, and the whole state saved to and
 restored from a file (``save`` / ``load``).
+
+``split_common=True`` is for fleets whose errors move together (shared data source,
+shared features): a common fluctuation otherwise makes many models alarm at once,
+and with ``"bh_window"`` these bursts dominate the false alarms (experiment 18). Each
+model's values are standardised by the mean and standard deviation of its own
+reference; the cross-sectional median of the standardised values is the common
+component, and the detectors watch the residuals (value minus the median). The
+common component gets its own calibrated detector, tested in the same family as the
+models; when it alarms, ``fleet_alarm`` is set for that step: something shared by
+all models has changed, which is better handled as an incident than by retraining
+every model. A drift of the whole fleet is invisible in the residuals and is caught
+only this way; the median assumes fewer than half of the models drift at once. In
+this mode every monitored model must report at every step, and a retrained model
+re-estimates its standardisation from its new reference.
+
+After every ``update``, ``last_pvalues`` holds the p-values that became ready in that
+call, keyed by model id (and ``StreamingMonitor.FLEET`` for the common component).
 
 - **`add_model(model_id) -> None`** 
 
