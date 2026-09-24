@@ -1,0 +1,62 @@
+"""Evaluation of a monitoring run against the known change points.
+
+Error side: FDP (false alarms / alarms), false alarms per window, probability
+of at least one false alarm in a window, and MTFA in stream-steps.
+Detection side: for every drifting stream the delay is the time from the onset
+to the end of the first window whose test alarms; a drift that is never
+caught counts as missed (MDR) and keeps degrading the model until the end of
+the run. ``degraded_per_drift`` averages this censored delay over all drifts,
+so it penalises both slow detection and misses.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from .monitor import MonitorResult
+
+
+def summarize(result: MonitorResult) -> dict:
+    tests = result.tests
+    scenario = result.scenario
+    n_streams, n_steps = scenario.n_streams, scenario.n_steps
+    rejected = tests["rejected"].to_numpy()
+    null = tests["is_null"].to_numpy()
+    n_alarms = int(rejected.sum())
+    n_false = int((rejected & null).sum())
+    fa_windows = tests.loc[rejected & null, "window"].nunique()
+    monitored_steps = n_streams * (n_steps - result.config.n_ref)
+
+    alarms = tests.loc[rejected, ["stream", "t_end"]]
+    first_alarm = {}
+    delays, degraded = [], []
+    for k in scenario.drifting:
+        onset = scenario.change_start[k]
+        after = alarms.loc[(alarms["stream"] == k) & (alarms["t_end"] > onset), "t_end"]
+        if after.empty:
+            degraded.append(n_steps - onset)
+        else:
+            first_alarm[k] = int(after.min())
+            delays.append(first_alarm[k] - onset)
+            degraded.append(first_alarm[k] - onset)
+    n_drifts = len(scenario.drifting)
+
+    return {
+        "n_tests": len(tests),
+        "n_null_tests": int(null.sum()),
+        "alarms": n_alarms,
+        "false_alarms": n_false,
+        "true_alarms": n_alarms - n_false,
+        "fdp": n_false / max(n_alarms, 1),
+        "far_per_test": n_false / max(int(null.sum()), 1),
+        "false_alarms_per_window": n_false / result.n_windows,
+        "p_any_false_alarm_per_window": fa_windows / result.n_windows,
+        "false_alarms_per_1k_stream_steps": 1000 * n_false / monitored_steps,
+        "mtfa_stream_steps": monitored_steps / n_false if n_false else np.inf,
+        "n_drifts": n_drifts,
+        "detected": len(delays),
+        "mdr": 1 - len(delays) / n_drifts if n_drifts else np.nan,
+        "mean_delay": float(np.mean(delays)) if delays else np.nan,
+        "median_delay": float(np.median(delays)) if delays else np.nan,
+        "degraded_per_drift": float(np.mean(degraded)) if degraded else np.nan,
+    }
