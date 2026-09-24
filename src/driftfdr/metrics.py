@@ -4,6 +4,8 @@ Error side: FDP (false alarms / alarms over the whole run), the per-window
 FDP averaged over windows (what a per-window BH controls), false alarms per
 window, probability of at least one false alarm in a window, and MTFA in
 stream-steps.
+Combined: MTR = MTFA / MTD * (1 - MDR) (Bifet et al., 2013), where MTFA is in
+stream-steps per false alarm, so it is comparable across fleets of equal size.
 Detection side: for every drifting stream the delay is the time from the onset
 to the end of the first window whose test alarms; a drift that is never
 caught counts as missed (MDR) and keeps degrading the model until the end of
@@ -70,4 +72,8 @@ def summarize(result: MonitorResult) -> dict:
         "mean_delay": float(np.mean(delays)) if delays else np.nan,
         "median_delay": float(np.median(delays)) if delays else np.nan,
         "degraded_per_drift": float(np.mean(degraded)) if degraded else np.nan,
+        # mean time ratio of Bifet et al. (2013): MTFA / MTD * (1 - MDR), higher is better
+        "mtr": (monitored_steps / n_false if n_false else np.inf) / np.mean(delays) * (len(delays) / n_drifts)
+        if delays and n_drifts
+        else np.nan,
     }
