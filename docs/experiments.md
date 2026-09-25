@@ -873,6 +873,41 @@ Tables: `results/exp23_tables.md`. The FX part needs the data:
 `python experiments/exp23_speed.py --fx DIRECTORY_WITH_CSV`; without the flag it is taken from the
 last run.
 
+### Experiment 24. Monitoring without labels through CBPE
+
+When labels arrive late, the model's true error is unknown. NannyML's CBPE estimates it from the
+predicted probabilities (`driftfdr.integrations.cbpe_estimated_error`). This checks whether that
+estimate can be monitored instead of the true error. Electricity, 50 logistic models, 2 repeats,
+in two variants: natural changes only, and with real p(y|X) drift injected into 20% of the models
+(labels flipped with probability 0.3). A step is 100 rows; the reference is 40 steps (with labels,
+CBPE is fitted on it); window 10, horizon 4, δ = 5 points, Bonferroni. An alarm is right if the
+true error over the next 20 steps exceeds the reference by more than δ.
+
+| signal | correlation with the true error | alarms (MeanShift(1)) | share of false | degradations caught | injected drifts caught |
+|---|---|---|---|---|---|
+| true error, with labels | 1 | 10–12 | 0 | 13–14% | 18% |
+| CBPE estimate, no labels | **−0.21…−0.25** | **0** | — | **0%** | **0%** |
+
+- **On these data CBPE does not replace labels.** The error estimate is unrelated to the true error
+  (the correlation is even negative) and systematically too low: about 0.10–0.16 against a true
+  0.32–0.53 on the models checked. For a model with injected drift the true error rose from 0.21 to
+  0.42 while the CBPE estimate fell. CBPE relies on calibrated probabilities and an unchanged
+  p(y|X); on the non-stationary Electricity both are violated, and monitoring the estimate stays
+  silent — no false alarms, but no detections either.
+- **Practical conclusion:** CBPE is a signal for the case where only the input distribution changes
+  and the model's probabilities are calibrated. Check it on your own data: compare the CBPE estimate
+  with the true error on a period for which labels have arrived. Real p(y|X) drift is invisible
+  without labels (exp. 11).
+- **The data are hard even with labels:** the error of a 100-row step varies with an sd of about
+  0.19 and an autocorrelation of 0.6, so only a seventh of the degradations are caught, with no
+  false alarms.
+- **e-CUSUM raised no alarm with a 40-step reference.** Its calibration is right, but from 40 points
+  it has to estimate the mean and an AR model, and the bootstrap turns that uncertainty into a wide
+  null distribution. MeanShift(1) estimates only the mean and is more powerful on a short reference.
+  e-CUSUM needs a reference of at least a few hundred points (300 in exp. 23).
+
+Tables: `results/exp24_tables.md`. Running it requires `pip install nannyml river`.
+
 ## Limitations
 
 - Most conclusions come from synthetic data; there are five real data sources (four public data
@@ -902,7 +937,7 @@ p(X) vs p(y|X) and cyclic drift (11), types and sizes of drift (12), a benchmark
 (15), comparison with Evidently and NannyML (17), bursts of false alarms vs fleet-wide drift (18),
 runtime (19), dependence between models on real data (20), a single benchmark of 100 scenarios
 (21), a fleet of volatility models on exchange rates (22), faster at the same budget: whitening,
-shorter windows, a sequential e-CUSUM (23).
+shorter windows, a sequential e-CUSUM (23), monitoring without labels through CBPE (24).
 
 Closed with conclusions:
 
@@ -969,4 +1004,5 @@ python experiments/exp20_real_correlation.py  # ~2 min
 python experiments/exp21_benchmark.py      # ~1 h
 python experiments/exp22_fx.py DATA_DIR    # ~2 min; MetaTrader 5 hourly CSVs, not in the repository
 python experiments/exp23_speed.py --fx DATA_DIR  # ~40 min; without --fx the FX part comes from the last run
+python experiments/exp24_cbpe.py           # ~10 min; needs pip install nannyml
 ```

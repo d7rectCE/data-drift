@@ -41,7 +41,7 @@ did not get worse. NannyML's performance monitoring is about as accurate as drif
 ±3σ threshold is fixed and ignores the number of models; in driftfdr the false-alarm level, the
 correction for fleet size and the tolerated degradation are explicit. Monitoring is as fast as
 the river detector itself (about 1 µs per step per model); calibration takes a fraction of a
-second per model after each retrain (experiment 19). Details and all 23 experiments are in
+second per model after each retrain (experiment 19). Details and all 24 experiments are in
 [docs/experiments.md](docs/experiments.md).
 
 ### Installation
@@ -108,7 +108,7 @@ Optional adapters in `driftfdr.integrations`; each needs its own extra and nothi
 |---|---|---|
 | Prometheus | `PrometheusExporter(monitor).serve(8000)` publishes p-values, alarms and fleet alarms; alert rules in `examples/prometheus/alerts.yml` | `pip install -e ".[prometheus]"` |
 | MLflow | `MLflowReporter(monitor, run_id=..., model_versions={id: (name, version)})` logs p-values to a run and tags the registered version of an alarmed model with `driftfdr_retrain` | `pip install -e ".[mlflow]"` |
-| NannyML | `cbpe_estimated_error(reference, analysis, chunk_size)`: a label-free error estimate to monitor while labels are delayed (it cannot see changes in p(y\|X)) | `pip install -e ".[nannyml]"` |
+| NannyML | `cbpe_estimated_error(reference, analysis, chunk_size)`: a label-free error estimate to monitor while labels are delayed; it relies on calibrated probabilities and cannot see changes in p(y\|X), and on Electricity it failed (exp. 24): check it against the true error first | `pip install -e ".[nannyml]"` |
 
 `examples/prometheus_service.py` runs the monitor as a small service: it reads errors, exposes
 metrics, saves its state on exit and resumes from it. Evidently's drift tests are not wrapped: they
@@ -120,7 +120,7 @@ worse (exp. 17), and a multiplicity correction over invalid p-values does not fi
 | what | recommendation | why |
 |---|---|---|
 | signal | the model's error or loss, not its input features | feature detectors alarm on harmless drift and miss harmful drift (exp. 11) |
-| detector | `ECUSUM` for speed, `MeanShift(3)` for robustness to short spikes; `PageHinkley` | at the same false-alarm budget e-CUSUM catches drift 26% faster than PH and MeanShift(3), twice as fast on abrupt shifts (exp. 23); MeanShift(3) ignores one-window spikes (exp. 9, 14) |
+| detector | `ECUSUM` for speed (with a reference of a few hundred points or more, exp. 24), `MeanShift(3)` for robustness to short spikes; `PageHinkley` | at the same false-alarm budget e-CUSUM catches drift 26% faster than PH and MeanShift(3), twice as fast on abrupt shifts (exp. 23); MeanShift(3) ignores one-window spikes (exp. 9, 14) |
 | step and window | time units that are multiples of the data's cycle (hour, day) | otherwise a daily cycle looks like drift (exp. 16); `bucket_means` |
 | null hypothesis | tolerance `tolerance > 0`: "the error rose materially" | on real data "nothing changed" never holds (exp. 8, 14) |
 | tolerance δ | `tolerance_from_cost(retrain cost, horizon)` | retraining pays off when a rise δ over the horizon costs more than the retrain itself |
@@ -173,7 +173,7 @@ src/driftfdr/
   streams.py       synthetic scenarios with known drift points, the 100-scenario benchmark_suite
   datasets.py      model fleets on INSECTS, Electricity, Airlines, Covertype and hourly FX rates
   integrations/    Prometheus exporter, MLflow reporter, NannyML CBPE signal (optional)
-experiments/       23 experiments (exp1…exp23)
+experiments/       24 experiments (exp1…exp24)
 results/           tables and figures of the experiments, the demo page
 docs/              method, related work, experiment log (English and *.ru.md), API reference (generated: python docs/gen_api.py)
 tests/             83 tests: agreement with river, bootstrap, calibration, procedures, streaming
@@ -238,7 +238,7 @@ driftfdr 0.88, у Page-Hinkley river по умолчанию 0.06: он лови
 зависит от числа моделей; в driftfdr уровень ложных тревог, поправка на размер парка и допустимое
 ухудшение задаются явно. По скорости мониторинг не медленнее самого детектора river (около 1 мкс
 на шаг на модель); калибровка занимает доли секунды на модель после каждого переобучения
-(эксп. 19). Подробности и все 23 эксперимента — в
+(эксп. 19). Подробности и все 24 эксперимента — в
 [docs/experiments.ru.md](docs/experiments.ru.md).
 
 ### Установка
@@ -306,7 +306,7 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 |---|---|---|
 | Prometheus | `PrometheusExporter(monitor).serve(8000)` публикует p-значения, тревоги и тревоги парка; правила алертов — `examples/prometheus/alerts.yml` | `pip install -e ".[prometheus]"` |
 | MLflow | `MLflowReporter(monitor, run_id=..., model_versions={id: (name, version)})` пишет p-значения в run и ставит тег `driftfdr_retrain` на зарегистрированную версию модели с тревогой | `pip install -e ".[mlflow]"` |
-| NannyML | `cbpe_estimated_error(reference, analysis, chunk_size)`: оценка ошибки без меток, чтобы мониторить, пока метки задерживаются (изменения p(y\|X) она не видит) | `pip install -e ".[nannyml]"` |
+| NannyML | `cbpe_estimated_error(reference, analysis, chunk_size)`: оценка ошибки без меток, чтобы мониторить, пока метки задерживаются; опирается на откалиброванные вероятности, изменений p(y\|X) не видит, на Electricity не сработала (эксп. 24) — сначала сверьте её с настоящей ошибкой | `pip install -e ".[nannyml]"` |
 
 `examples/prometheus_service.py` запускает монитор как небольшой сервис: читает ошибки, отдаёт
 метрики, сохраняет состояние при остановке и продолжает с него. Тесты дрейфа Evidently не
@@ -318,7 +318,7 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 | что | рекомендация | почему |
 |---|---|---|
 | сигнал | ошибка или потеря модели, не входные признаки | детекторы на признаках тревожат на безвредном дрейфе и не видят вредного (эксп. 11) |
-| детектор | `ECUSUM` для скорости, `MeanShift(3)` для устойчивости к кратким всплескам; `PageHinkley` | при том же бюджете ложных тревог e-CUSUM ловит дрейф на 26% быстрее PH и MeanShift(3), на резких сдвигах вдвое (эксп. 23); MeanShift(3) не реагирует на однооконные всплески (эксп. 9, 14) |
+| детектор | `ECUSUM` для скорости (при опорном отрезке от нескольких сотен точек, эксп. 24), `MeanShift(3)` для устойчивости к кратким всплескам; `PageHinkley` | при том же бюджете ложных тревог e-CUSUM ловит дрейф на 26% быстрее PH и MeanShift(3), на резких сдвигах вдвое (эксп. 23); MeanShift(3) не реагирует на однооконные всплески (эксп. 9, 14) |
 | шаг и окно | в единицах времени, кратных циклу данных (час, сутки) | иначе суточный цикл выглядит как дрейф (эксп. 16); `bucket_means` |
 | нулевая гипотеза | допуск `tolerance > 0`: «ошибка выросла существенно» | на реальных данных «ничего не изменилось» не бывает (эксп. 8, 14) |
 | допуск δ | `tolerance_from_cost(цена переобучения, горизонт)` | переобучать выгодно, если рост ошибки δ за горизонт стоит больше самого переобучения |
@@ -370,7 +370,7 @@ src/driftfdr/
   streams.py       синтетические сценарии с известными точками дрейфа, бенчмарк benchmark_suite
   datasets.py      парки моделей на INSECTS, Electricity, Airlines, Covertype и часовых курсах валют
   integrations/    экспорт в Prometheus, отчёты в MLflow, сигнал NannyML CBPE (опционально)
-experiments/       23 эксперимента (exp1…exp23)
+experiments/       24 эксперимента (exp1…exp24)
 results/           таблицы и графики экспериментов, страница демонстрации
 docs/              метод, связанные работы, журнал экспериментов (английский и *.ru.md), справочник API (генерируется: python docs/gen_api.py)
 tests/             83 теста: совпадение с river, бутстреп, калибровка, процедуры, потоковый режим
