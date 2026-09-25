@@ -60,15 +60,19 @@ After an alarm the stream is retrained, a new reference is collected over the ne
 steps, and the stream is not monitored meanwhile.
 
 **Sequential mode** (`StreamingMonitor(sequential=True)`, detectors with `start_stream`, i.e.
-`ECUSUM`). The detector runs continuously from the end of the reference, and at every step its
-current score is compared with the null distribution of the *largest score within a window*
-(the same bootstrap as in the windowed mode). Alarming as soon as the p-value drops to α/K keeps
+`ECUSUM`). The detector runs from the end of the reference and at every step its current score is
+compared with the null distribution of the *largest score within a window* (the same bootstrap as
+in the windowed mode). Its look-back is bounded like in the windowed mode: the stream keeps one
+CUSUM per start of each of the last `horizon` windows and scores the oldest, so the statistic is
+the one the threshold was calibrated on; an unbounded CUSUM would slowly accumulate the bias left
+by estimating the reference mean and exceed the budget (exp. 23). Alarming as soon as the p-value drops to α/K keeps
 the probability of a false alarm in any window at α/K per model and α across the fleet — the
 Bonferroni budget of the windowed mode — but without waiting for the window to end; the window
 only sets the time unit of the budget. BH and online rules are not used in this mode.
 
 **Streaming implementation.** When several models finish a window at the same step, their
-window statistics are computed in one vectorised call per group of equal detectors;
+window statistics are computed in one vectorised call per group of equal detectors (16–22% cheaper
+per step, exp. 23);
 `NullDistribution.pvalue_scalar` gives per-step p-values without numpy overhead.
 
 The null hypothesis is defined by regimes: a test is null if the stream's mean is constant over

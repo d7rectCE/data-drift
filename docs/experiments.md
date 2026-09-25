@@ -811,6 +811,68 @@ seeds.
 
 Tables: `results/exp22_tables.md`. Run: `python experiments/exp22_fx.py DIRECTORY_WITH_CSV`.
 
+### Experiment 23. Faster at the same false-alarm budget
+
+Three ways to cut the delay, all through `StreamingMonitor` step by step, with Bonferroni and one
+false-alarm budget: α = 0.05 per 100 steps across the fleet.
+
+- **Whitening** (`Prewhitened`): the detector runs on standardised innovations of an AR model
+  estimated on the reference.
+- **Shorter windows:** 25 steps instead of 100 at α/4, so that the budget per 100 steps is the same.
+- **A sequential e-detector** (`ECUSUM`): a mixture CUSUM e-detector on whitened innovations, in the
+  windowed mode and checked at every step (`sequential=True`).
+
+Synthetic data: K = 100 AR(1) models, φ = 0.5; abrupt or gradual drift of 0.5σ or 1σ in 10% of the
+models; ρ = 0 or 0.6; 2 seeds per case, plus drift-free scenarios with 6 seeds each. An alarm is
+false if the model's mean did not change from the start of its current reference to the alarm.
+Real data: the 40 FX volatility models of experiment 22 (window of 20 trading days).
+
+| method | delay, steps | 1σ abrupt | missed | F1 | false alarm per 100 steps without drift, ρ = 0 / 0.6 | µs per model per step |
+|---|---|---|---|---|---|---|
+| **e-CUSUM, every step** | **375** | **101–104** | 5% | 0.77 | 0.025 / 0.046 | 7.5 |
+| e-CUSUM, window 100 | 427 | 140–155 | 4% | 0.76 | 0.025 / 0.046 | 2.1 |
+| MeanShift(3), window 100 | 504 | 280–295 | 4% | 0.78 | 0.018 / 0.035 | 1.6 |
+| PH, window 100 | 506 | 210–230 | 11% | 0.75 | 0.011 / 0.025 | 1.8 |
+| PH + whitening, window 100 | 506 | 205–230 | 14% | 0.76 | 0.011 / 0.025 | 2.0 |
+| PH, window 25 | 521 | 197–229 | 23% | 0.73 | 0.007 / 0.011 | 5.4 |
+| PH + whitening, window 25 | 561 | 200–230 | 23% | 0.72 | 0.011 / 0.004 | 6.1 |
+
+| FX rates, δ = 0.05 | false alarms per model per year | share of false | days on a degraded model per year |
+|---|---|---|---|
+| PH, window of 20 days | 0 | 0 | 26.1 |
+| MeanShift(3) | 0.011 | 0.22 | 28.4 |
+| e-CUSUM, window of 20 days | 0 | 0 | **21.2** |
+| e-CUSUM, every step | 0.002 | 0.06 | **21.3** |
+
+- **e-CUSUM is the only one of the three that really speeds things up.** At the same false-alarm
+  budget the sequential e-CUSUM catches drift 26% faster than PH and MeanShift(3), and twice as fast
+  on an abrupt 1σ shift (about 100 steps against 210–295). This is close to a rough theoretical lower
+  bound for this scenario (about 75 steps); the earlier detectors were 2.5–4 times above it. The
+  windowed e-CUSUM already gives most of the gain (427 steps): *how* the detector accumulates
+  evidence matters more than how often a decision is taken.
+- **On FX rates e-CUSUM cuts the time spent on a degraded model** from 26 to 21 days per model per
+  year, with no false alarms in the windowed mode.
+- **Whitening PH did not help** (506 against 506 steps, even more misses). For a shift in the mean a
+  calibrated PH is already nearly efficient: partial sums of an AR series carry the same information
+  as sums of its innovations. Whitening is useful as part of e-CUSUM, where it yields proper
+  e-values, not as a separate wrapper.
+- **Shorter windows are worse:** more misses (23% against 11%) and no shorter delay. The gain from
+  more frequent decisions is eaten by the stricter level per test (α/4), and a step costs three
+  times more.
+- **The sequential mode must be bounded by the horizon.** The first version accumulated the CUSUM
+  forever since the retrain and exceeded the budget 1.5–3 times: a small error in the estimated
+  reference mean acts like a weak permanent shift, and an unbounded sum finds it. The stream now
+  keeps one CUSUM per start of each of the last h windows and scores the oldest — exactly the
+  statistic the threshold is calibrated on. The price is h updates per step: 7.5 µs per model
+  instead of 2.
+- **Batched window statistics** (one vectorised call per group of equal detectors at a window end)
+  make the windowed step 16–22% cheaper: in a direct comparison on one machine, 1.97 against
+  2.34 µs per model with 100 models and 2.13 against 2.72 with 1000.
+
+Tables: `results/exp23_tables.md`. The FX part needs the data:
+`python experiments/exp23_speed.py --fx DIRECTORY_WITH_CSV`; without the flag it is taken from the
+last run.
+
 ## Limitations
 
 - Most conclusions come from synthetic data; there are five real data sources (four public data
@@ -839,7 +901,8 @@ Done: calibration and the multiplicity correction (exp. 1–3), clustered drifts
 p(X) vs p(y|X) and cyclic drift (11), types and sizes of drift (12), a benchmark of detectors
 (15), comparison with Evidently and NannyML (17), bursts of false alarms vs fleet-wide drift (18),
 runtime (19), dependence between models on real data (20), a single benchmark of 100 scenarios
-(21), a fleet of volatility models on exchange rates (22).
+(21), a fleet of volatility models on exchange rates (22), faster at the same budget: whitening,
+shorter windows, a sequential e-CUSUM (23).
 
 Closed with conclusions:
 
@@ -864,7 +927,7 @@ Open items are in [the research plan](#research-plan).
 | The null hypothesis on real data | regime null between change points; material-degradation null with tolerance δ, persistence (exp. 7–9, 14, 16) | — |
 | Synthetic test bed: abrupt, gradual, cyclic drift; p(X) and p(y\|X) separately; 1–500 streams | all of it, in experiments 1–5, 11–13, 18; the fixed suite of 100 scenarios `benchmark_suite` (exp. 21) | — |
 | Metrics MTFA, MDR, MTD, FAR, R-measure | MTFA, MDR, MTD, FAR, plus FDR, MTR, cost of delay, event-level precision / recall / F1 as in Cerqueira et al. (`summarize`) | — (R-measure is not defined in the review's sources; F1 is used instead) |
-| Online FDR: alpha-investing, LORD, SAFFRON and relatives | plus LOND, BatchBH, BH, Storey's BH, e-BH, Bonferroni within a window (exp. 2–4, 12, 13) | e-detectors and the error over patience (EOP, Dandapanthula–Ramdas) — for the paper |
+| Online FDR: alpha-investing, LORD, SAFFRON and relatives | plus LOND, BatchBH, BH, Storey's BH, e-BH, Bonferroni within a window (exp. 2–4, 12, 13); a sequential e-CUSUM checked at every step (exp. 23) | a formal comparison with the error over patience (EOP, Dandapanthula–Ramdas) — for the paper |
 | Dependence between streams | the ceiling of the gain (exp. 5), Bonferroni under any correlation (exp. 13), residuals and the fleet test (exp. 18), correlation on real data (exp. 20) | — (a joint bootstrap is not needed with `split_common`, exp. 20) |
 | Retraining policy, Pareto frontier by number of streams and type of drift | exp. 2–4, 12; tolerance from the cost of a retrain | — |
 | Real data: Electricity, Airlines, Covertype, INSECTS | all four (exp. 7, 14, 16); plus a fleet of volatility models on five currency pairs for 2010–2026 (exp. 22) | — |
@@ -905,4 +968,5 @@ python experiments/exp19_runtime.py        # ~10 min, one process
 python experiments/exp20_real_correlation.py  # ~2 min
 python experiments/exp21_benchmark.py      # ~1 h
 python experiments/exp22_fx.py DATA_DIR    # ~2 min; MetaTrader 5 hourly CSVs, not in the repository
+python experiments/exp23_speed.py --fx DATA_DIR  # ~40 min; without --fx the FX part comes from the last run
 ```

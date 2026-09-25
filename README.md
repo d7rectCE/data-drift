@@ -41,7 +41,7 @@ did not get worse. NannyML's performance monitoring is about as accurate as drif
 ±3σ threshold is fixed and ignores the number of models; in driftfdr the false-alarm level, the
 correction for fleet size and the tolerated degradation are explicit. Monitoring is as fast as
 the river detector itself (about 1 µs per step per model); calibration takes a fraction of a
-second per model after each retrain (experiment 19). Details and all 22 experiments are in
+second per model after each retrain (experiment 19). Details and all 23 experiments are in
 [docs/experiments.md](docs/experiments.md).
 
 ### Installation
@@ -84,6 +84,10 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
   (experiment 18). On all four real data sets the models are strongly correlated, and
   `split_common` removes most of that dependence (experiment 20). In this mode every model must
   report at every step.
+- To react without waiting for the end of a window, use `detector_factory=ECUSUM` with
+  `sequential=True`: every model is checked at every step, with the same false-alarm budget per
+  window (Bonferroni). At the same budget this caught drift 26% faster than the windowed PH
+  (exp. 23); a step costs about 7 µs per model instead of 2.
 - Models may report irregularly or skip steps: each has its own window clock. Models can be added
   and removed on the fly (`add_model`, `remove_model`).
 - With delayed labels, pass a model's error when its label arrives.
@@ -101,7 +105,7 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 | what | recommendation | why |
 |---|---|---|
 | signal | the model's error or loss, not its input features | feature detectors alarm on harmless drift and miss harmful drift (exp. 11) |
-| detector | `MeanShift(1)` for speed, `MeanShift(3)` for robustness; `PageHinkley` | the most powerful at an equal false-alarm rate (exp. 15) |
+| detector | `ECUSUM` for speed, `MeanShift(3)` for robustness to short spikes; `PageHinkley` | at the same false-alarm budget e-CUSUM catches drift 26% faster than PH and MeanShift(3), twice as fast on abrupt shifts (exp. 23); MeanShift(3) ignores one-window spikes (exp. 9, 14) |
 | step and window | time units that are multiples of the data's cycle (hour, day) | otherwise a daily cycle looks like drift (exp. 16); `bucket_means` |
 | null hypothesis | tolerance `tolerance > 0`: "the error rose materially" | on real data "nothing changed" never holds (exp. 8, 14) |
 | tolerance δ | `tolerance_from_cost(retrain cost, horizon)` | retraining pays off when a rise δ over the horizon costs more than the retrain itself |
@@ -143,8 +147,8 @@ The method: [docs/method.md](docs/method.md); the relation to the literature:
 
 ```
 src/driftfdr/
-  streaming.py     StreamingMonitor (incl. split_common), CalibratedDetector, from_river
-  detectors.py     Page-Hinkley, DDM, ADWIN, KS, sliding KS, MeanShift as continuous scores
+  streaming.py     StreamingMonitor (split_common, sequential mode), CalibratedDetector, from_river
+  detectors.py     Page-Hinkley, DDM, ADWIN, KS, sliding KS, MeanShift, e-CUSUM; AR whitening
   calibration.py   null distributions, p-values, tail, tolerance δ
   bootstrap.py     block, stationary and AR-sieve bootstrap
   online_fdr.py    Bonferroni, BH, Storey-BH, e-BH per window; BatchBH, LORD++, SAFFRON, LOND, alpha-investing
@@ -153,10 +157,10 @@ src/driftfdr/
   metrics.py       FDR, delays, misses, cost of delay, event-level precision / recall / F1
   streams.py       synthetic scenarios with known drift points, the 100-scenario benchmark_suite
   datasets.py      model fleets on INSECTS, Electricity, Airlines, Covertype and hourly FX rates
-experiments/       22 experiments (exp1…exp22)
+experiments/       23 experiments (exp1…exp23)
 results/           tables and figures of the experiments, the demo page
 docs/              method, related work, experiment log (English and *.ru.md), API reference (generated: python docs/gen_api.py)
-tests/             76 tests: agreement with river, bootstrap, calibration, procedures, streaming
+tests/             80 tests: agreement with river, bootstrap, calibration, procedures, streaming
 examples/          online monitoring example and the replayable demo
 ```
 
@@ -218,7 +222,7 @@ driftfdr 0.88, у Page-Hinkley river по умолчанию 0.06: он лови
 зависит от числа моделей; в driftfdr уровень ложных тревог, поправка на размер парка и допустимое
 ухудшение задаются явно. По скорости мониторинг не медленнее самого детектора river (около 1 мкс
 на шаг на модель); калибровка занимает доли секунды на модель после каждого переобучения
-(эксп. 19). Подробности и все 22 эксперимента — в
+(эксп. 19). Подробности и все 23 эксперимента — в
 [docs/experiments.ru.md](docs/experiments.ru.md).
 
 ### Установка
@@ -261,6 +265,10 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
   На всех четырёх реальных наборах модели сильно коррелированы, а `split_common` снимает
   большую часть этой зависимости (эксп. 20).
   В этом режиме каждая модель должна присылать значение на каждом шаге.
+- Чтобы реагировать, не дожидаясь конца окна, используйте `detector_factory=ECUSUM` с
+  `sequential=True`: каждая модель проверяется на каждом шаге при том же бюджете ложных тревог на
+  окно (Бонферрони). При том же бюджете это ловило дрейф на 26% быстрее оконного PH (эксп. 23);
+  шаг стоит около 7 мкс на модель вместо 2.
 - Модели могут присылать данные нерегулярно или с пропусками: у каждой свои часы окон.
   Модели добавляются и убираются на лету (`add_model`, `remove_model`).
 - При задержке меток передавайте ошибку модели тогда, когда пришла метка.
@@ -278,7 +286,7 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 | что | рекомендация | почему |
 |---|---|---|
 | сигнал | ошибка или потеря модели, не входные признаки | детекторы на признаках тревожат на безвредном дрейфе и не видят вредного (эксп. 11) |
-| детектор | `MeanShift(1)` для скорости, `MeanShift(3)` для устойчивости; `PageHinkley` | самые мощные при сравнении на одном уровне ложных тревог (эксп. 15) |
+| детектор | `ECUSUM` для скорости, `MeanShift(3)` для устойчивости к кратким всплескам; `PageHinkley` | при том же бюджете ложных тревог e-CUSUM ловит дрейф на 26% быстрее PH и MeanShift(3), на резких сдвигах вдвое (эксп. 23); MeanShift(3) не реагирует на однооконные всплески (эксп. 9, 14) |
 | шаг и окно | в единицах времени, кратных циклу данных (час, сутки) | иначе суточный цикл выглядит как дрейф (эксп. 16); `bucket_means` |
 | нулевая гипотеза | допуск `tolerance > 0`: «ошибка выросла существенно» | на реальных данных «ничего не изменилось» не бывает (эксп. 8, 14) |
 | допуск δ | `tolerance_from_cost(цена переобучения, горизонт)` | переобучать выгодно, если рост ошибки δ за горизонт стоит больше самого переобучения |
@@ -319,8 +327,8 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 
 ```
 src/driftfdr/
-  streaming.py     StreamingMonitor (включая split_common), CalibratedDetector, from_river
-  detectors.py     Page-Hinkley, DDM, ADWIN, KS, скользящий KS, MeanShift как непрерывные скоры
+  streaming.py     StreamingMonitor (split_common, последовательный режим), CalibratedDetector, from_river
+  detectors.py     Page-Hinkley, DDM, ADWIN, KS, скользящий KS, MeanShift, e-CUSUM; отбеливание AR
   calibration.py   нулевые распределения, p-значения, хвост, допуск δ
   bootstrap.py     блочный, стационарный и AR-sieve бутстреп
   online_fdr.py    Бонферрони, BH, BH Стори, e-BH в окне; BatchBH, LORD++, SAFFRON, LOND, alpha-investing
@@ -329,10 +337,10 @@ src/driftfdr/
   metrics.py       FDR, задержки, пропуски, цена задержки, событийные точность / полнота / F1
   streams.py       синтетические сценарии с известными точками дрейфа, бенчмарк benchmark_suite
   datasets.py      парки моделей на INSECTS, Electricity, Airlines, Covertype и часовых курсах валют
-experiments/       22 эксперимента (exp1…exp22)
+experiments/       23 эксперимента (exp1…exp23)
 results/           таблицы и графики экспериментов, страница демонстрации
 docs/              метод, связанные работы, журнал экспериментов (английский и *.ru.md), справочник API (генерируется: python docs/gen_api.py)
-tests/             76 тестов: совпадение с river, бутстреп, калибровка, процедуры, потоковый режим
+tests/             80 тестов: совпадение с river, бутстреп, калибровка, процедуры, потоковый режим
 examples/          пример онлайн-мониторинга и демонстрация с проигрыванием
 ```
 
