@@ -58,7 +58,8 @@ METHODS = {  # name: (factory, window, horizon, alpha scale, sequential)
 }
 CASES = {f"{kind}, Δ={mag:g}, ρ={rho:g}": dict(drift_type=kind, magnitude=mag, rho=rho, drift_fraction=0.1)
          for kind in ("abrupt", "gradual") for mag in (0.5, 1.0) for rho in (0.0, 0.6)}
-CASES["no drift, ρ=0.3"] = dict(rho=0.3, drift_fraction=0.0)
+NULL_CASES = {f"no drift, ρ={rho:g}": dict(rho=rho, drift_fraction=0.0) for rho in (0.0, 0.6)}
+CASES.update(NULL_CASES)
 
 
 _CALIBRATION_TIME = [0.0]
@@ -95,14 +96,20 @@ def synthetic_task(args):
     sc = make_scenario(ScenarioConfig(n_streams=n, n_steps=5000, phi=0.5, gradual_length=500, **CASES[case]), seed=seed)
     alarms, us = run(sc.values, method, 300, CalibrationConfig(), seed)
     onset = {int(k): int(sc.change_start[k]) for k in sc.drifting}
+    end = {int(k): int(sc.change_end[k]) for k in sc.drifting}
+    # an alarm is false iff the model's mean was constant from its reference start to the alarm
+    # (the regime null of run_monitor); after a reset during a gradual drift the ramp continues
+    ref_start = {k: 0 for k in range(sc.n_streams)}
     caught, false, delays, degraded, hits = set(), [], [], [], 0
     for k, t in alarms:
-        if k in onset and t > onset[k] and k not in caught:
+        changing = k in onset and t > onset[k] and ref_start[k] < end[k]
+        if not changing:
+            false.append(t)
+        elif k not in caught:
             caught.add(k)
             delays.append(t - onset[k])
             hits += t - onset[k] <= MAX_DELAY
-        else:
-            false.append(t)
+        ref_start[k] = t
     for k, o in onset.items():
         if k not in caught:
             degraded.append(sc.n_steps - o)
@@ -156,24 +163,29 @@ def main():
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--fx", default=None)
     args = parser.parse_args()
-    n, seeds = (30, 1) if args.quick else (100, 2)
-    tasks = [(c, s, m, n) for c in CASES for s in range(seeds) for m in METHODS]
+    n, seeds, null_seeds = (30, 1, 1) if args.quick else (100, 2, 6)
+    tasks = [(c, s, m, n) for c in CASES for s in range(null_seeds if c in NULL_CASES else seeds) for m in METHODS]
     raw = run_parallel(synthetic_task, tasks)
     raw.to_csv(RESULTS / "exp23_runs.csv", index=False)
     cols = ["false_alarms", "p_false_alarm_per_100_steps", "mean_delay", "degraded_per_drift", "missed", "f1",
             "us_per_model_step"]
-    drift = raw[~raw.case.str.startswith("no drift")]
+    drift = raw[~raw.case.isin(list(NULL_CASES))]
     overall = drift.groupby("method", sort=False)[cols].mean().reset_index()
-    null = raw[raw.case.str.startswith("no drift")].groupby("method", sort=False)[
-        ["false_alarms", "p_false_alarm_per_100_steps"]].mean().reset_index()
+    null = raw[raw.case.isin(list(NULL_CASES))].pivot_table(
+        index="method", columns="case", values="p_false_alarm_per_100_steps", sort=False).reset_index()
     by_case = drift.pivot_table(index="case", columns="method", values="mean_delay", sort=False).reset_index()
     parts = [f"## Скорость обнаружения при одном бюджете ложных тревог (α = {ALPHA} на 100 шагов по парку, "
              f"Бонферрони), K = {n}\n\n### Сценарии с дрейфом, среднее\n\n" + markdown_table(overall),
-             "### Без дрейфа: ложные тревоги\n\n" + markdown_table(null),
+             "### Без дрейфа: доля 100-шаговых отрезков с ложной тревогой (цель ≤ 0.05), 6 сидов\n\n"
+             + markdown_table(null),
              "### Средняя задержка по случаям, шагов\n\n" + markdown_table(by_case)]
+    fx = None
     if args.fx:
         fx = run_parallel(fx_task, [(args.fx, m, s) for m in METHODS for s in range(1 if args.quick else 3)])
         fx.to_csv(RESULTS / "exp23_fx_runs.csv", index=False)
+    elif (RESULTS / "exp23_fx_runs.csv").exists():  # the FX part needs the data; reuse the last run
+        fx = pd.read_csv(RESULTS / "exp23_fx_runs.csv")
+    if fx is not None:
         fx_agg = fx.groupby("method", sort=False).mean(numeric_only=True).drop(columns="seed").reset_index()
         parts.append(f"### Курсы валют, 40 моделей, δ = {FX_DELTA}, шаг — торговый день (окно 20 дней; "
                      "у методов с окном 25 — 5 дней)\n\n" + markdown_table(fx_agg))
