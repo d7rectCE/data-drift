@@ -1,4 +1,180 @@
-# driftfdr — мониторинг дрейфа для парка ML-моделей без лавины ложных тревог
+# driftfdr
+
+**English** · [Русский](#русский)
+
+## English
+
+### Drift monitoring for fleets of ML models without a flood of false alarms
+
+With tens or hundreds of models in production, drift detectors (Page-Hinkley, DDM, ADWIN, KS) at
+their default thresholds produce a stream of false alarms and needless retrains: every detector
+has an unknown false-alarm rate, and across many models the false alarms add up. driftfdr turns a
+detector's signal into a calibrated p-value that accounts for autocorrelation in the data, and
+decides which models to retrain across the whole fleet at once, at a chosen false-alarm level.
+
+```
+error of model 1 ─► detector ─► bootstrap calibration ─► p-value ─┐
+error of model 2 ─► detector ─► bootstrap calibration ─► p-value ─┼─► correction for the number of models ─► retrain?
+error of model K ─► detector ─► bootstrap calibration ─► p-value ─┘
+```
+
+### Why
+
+On real data — four public data sets (INSECTS, Electricity, Airlines, Covertype; 50 models each,
+rows in their original order) and hourly exchange rates of five currency pairs — the share of
+false retrains among all alarms:
+
+| data | river Page-Hinkley, defaults | driftfdr |
+|---|---|---|
+| INSECTS | 50% | 0% |
+| Electricity | 56% | 0–8% |
+| Covertype | 75% | 15% |
+| Airlines | 26% | 0–6% (hourly steps) |
+| FX rates, 40 volatility models, 2010–2026 | no alarms at all, no degradation caught | 0–10%, 63–100% of degradations above 30% caught |
+
+On a fixed suite of 100 synthetic scenarios the best driftfdr configuration reaches a detection
+F1 of 0.88, river's Page-Hinkley at its defaults 0.06: it catches every drift, but 97% of its
+alarms are false (experiment 21).
+
+Evidently's standard drift test on the error series alarms in 20–78% of windows where the model
+did not get worse. NannyML's performance monitoring is about as accurate as driftfdr, but its
+±3σ threshold is fixed and ignores the number of models; in driftfdr the false-alarm level, the
+correction for fleet size and the tolerated degradation are explicit. Monitoring is as fast as
+the river detector itself (about 1 µs per step per model); calibration takes a fraction of a
+second per model after each retrain (experiment 19). Details and all 22 experiments (in Russian)
+are in [docs/experiments.md](docs/experiments.md).
+
+### Installation
+
+```bash
+pip install -e .                 # numpy, scipy, pandas, matplotlib
+pip install -e ".[dev]"          # + pytest and river for the tests
+pip install -e ".[datasets]"     # + river and scikit-learn for the real data sets
+```
+
+### Quick start
+
+At every step the monitor takes the error (or loss) of each model and returns the models that
+should be retrained:
+
+```python
+from driftfdr import CalibrationConfig, MeanShift, StreamingMonitor
+
+monitor = StreamingMonitor(
+    model_ids=["pricing", "eta", "demand"],
+    detector_factory=lambda: MeanShift(3),     # alarm only if the degradation lasts 3 windows
+    procedure="bonferroni",                    # correction for the number of models
+    alpha=0.05,                                # false-alarm rate per window across the fleet
+    n_ref=300, window=100, horizon=5,          # in steps; a step can be an hour (see bucket_means)
+    calibration=CalibrationConfig(tolerance=0.05),  # retrain if the error rose by > 5 points
+)
+
+for errors in stream:                          # e.g. {"pricing": 0.21, "eta": 0.35}
+    for model_id in monitor.update(errors):
+        retrain(model_id)                      # the monitor starts collecting a new reference itself
+
+monitor.save("monitor.npz")                    # the state survives a service restart
+monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShift(3))
+```
+
+- If the models' errors move together (shared data source, shared features), set
+  `split_common=True`. The detectors then watch each model's deviation from the fleet median,
+  and the median itself is tested separately: its alarm sets `monitor.fleet_alarm` ("something
+  shared broke"). Without it a common spike produces a burst of simultaneous false alarms
+  (experiment 18). On all four real data sets the models are strongly correlated, and
+  `split_common` removes most of that dependence (experiment 20). In this mode every model must
+  report at every step.
+- Models may report irregularly or skip steps: each has its own window clock. Models can be added
+  and removed on the fly (`add_model`, `remove_model`).
+- With delayed labels, pass a model's error when its label arrives.
+- A detector can be taken from river with its settings:
+  `detector_factory=lambda: from_river(drift.PageHinkley(mode="up"))`.
+- Full example: `examples/streaming_demo.py`. Visual demo: `examples/live_demo.py` — 40 correlated
+  models, a common spike and a fleet-wide event; river at its defaults retrains 293 times
+  (248 wasted), driftfdr 10 times (1 wasted) plus one fleet alarm. The output,
+  [results/demo.html](results/demo.html), replays step by step in a browser.
+
+![Demo](results/figures/demo.png)
+
+### Recommended configuration
+
+| what | recommendation | why |
+|---|---|---|
+| signal | the model's error or loss, not its input features | feature detectors alarm on harmless drift and miss harmful drift (exp. 11) |
+| detector | `MeanShift(1)` for speed, `MeanShift(3)` for robustness; `PageHinkley` | the most powerful at an equal false-alarm rate (exp. 15) |
+| step and window | time units that are multiples of the data's cycle (hour, day) | otherwise a daily cycle looks like drift (exp. 16); `bucket_means` |
+| null hypothesis | tolerance `tolerance > 0`: "the error rose materially" | on real data "nothing changed" never holds (exp. 8, 14) |
+| tolerance δ | `tolerance_from_cost(retrain cost, horizon)` | retraining pays off when a rise δ over the horizon costs more than the retrain itself |
+| rule | `"bonferroni"` or `"bh_window"`; with `split_common=True` for correlated models | Bonferroni holds its level under any correlation (exp. 13), BH is faster when many models drift at once (exp. 4); with `split_common` the best F1 on the whole benchmark, and the gain grows with correlation (exp. 18, 21) |
+| not recommended | ADWIN at strict levels, DDM, LORD/SAFFRON, e-BH | ADWIN's calibrated tail is anti-conservative (exp. 10); DDM is weak; online FDR is slower at an equal number of false alarms (exp. 3, 12); e-BH misses a third of drifts (exp. 13) |
+
+### How it works
+
+1. **The detector as a continuous score.** Every detector has one sensitivity parameter, and its
+   binary signal is a threshold on an internal statistic. driftfdr uses that statistic; for
+   Page-Hinkley and DDM it reproduces river exactly.
+2. **Calibration.** The null distribution of the statistic is estimated by bootstrap from the
+   reference segment (data right after the model was trained): AR-sieve with parameter
+   uncertainty for continuous signals, block bootstrap for 0/1 errors, a GPD tail for small
+   p-values. A plain bootstrap under autocorrelation gives several times more false alarms than it
+   promises (exp. 1).
+3. **A fleet-level decision.** The p-values of all models whose window has ended go through a
+   multiplicity correction; alarmed models are retrained and collect a new reference.
+
+The method, the relation to the literature and the experiment log are in Russian:
+[docs/method.md](docs/method.md), [docs/related_work.md](docs/related_work.md),
+[docs/experiments.md](docs/experiments.md). The API reference for every class, method and
+function is in English: [docs/api.md](docs/api.md).
+
+### Limitations
+
+- The false-alarm level holds for PH, KS and MeanShift; ADWIN's tail calibration is about three
+  times anti-conservative.
+- The results come from synthetic data, four public data sets and hourly FX rates; there has been
+  no validation on production logs, and the models are not actually retrained (an alarm only
+  starts a new reference).
+- The corrections' guarantees assume independent p-values; with strongly correlated models
+  Bonferroni is the safer choice.
+- On noisy signals (for example, the daily loss of FX volatility models) only material
+  degradations are caught: rises of less than ~15% are indistinguishable from noise (exp. 22).
+- The full list is in [docs/experiments.md](docs/experiments.md#ограничения).
+
+### Repository layout
+
+```
+src/driftfdr/
+  streaming.py     StreamingMonitor (incl. split_common), CalibratedDetector, from_river
+  detectors.py     Page-Hinkley, DDM, ADWIN, KS, sliding KS, MeanShift as continuous scores
+  calibration.py   null distributions, p-values, tail, tolerance δ
+  bootstrap.py     block, stationary and AR-sieve bootstrap
+  online_fdr.py    Bonferroni, BH, Storey-BH, e-BH per window; BatchBH, LORD++, SAFFRON, LOND, alpha-investing
+  preprocess.py    time-bucket means, tolerance from retrain cost, split_common
+  monitor.py       batch monitoring of ready-made series (for the experiments)
+  metrics.py       FDR, delays, misses, cost of delay, event-level precision / recall / F1
+  streams.py       synthetic scenarios with known drift points, the 100-scenario benchmark_suite
+  datasets.py      model fleets on INSECTS, Electricity, Airlines, Covertype and hourly FX rates
+experiments/       22 experiments (exp1…exp22)
+results/           tables and figures of the experiments, the demo page
+docs/              method, API reference (generated: python docs/gen_api.py), experiment log
+tests/             76 tests: agreement with river, bootstrap, calibration, procedures, streaming
+examples/          online monitoring example and the replayable demo
+```
+
+### Tests and reproduction
+
+```bash
+pytest                                         # ~15 s
+python experiments/exp1_calibration.py --quick # any experiment; without --quick, the full run
+```
+
+The experiments use fixed seeds and pinned settings, so they are reproducible; a full run of
+each takes from a few minutes to about an hour on 4 cores.
+
+---
+
+## Русский
+
+### Мониторинг дрейфа для парка ML-моделей без лавины ложных тревог
 
 Когда в эксплуатации десятки и сотни моделей, детекторы дрейфа (Page-Hinkley, DDM, ADWIN, KS)
 на порогах по умолчанию дают поток ложных тревог и лишних переобучений: у каждого детектора
@@ -13,7 +189,7 @@ driftfdr превращает сигнал детектора в откалиб�
 ошибка модели K ─► детектор ─► бутстреп-калибровка ─► p-значение ─┘
 ```
 
-## Зачем
+### Зачем
 
 На реальных данных — четыре открытых набора (INSECTS, Electricity, Airlines, Covertype; по 50
 моделей, строки в исходном порядке) и часовые курсы пяти валютных пар — доля ложных переобучений
@@ -39,7 +215,7 @@ driftfdr 0.88, у Page-Hinkley river по умолчанию 0.06: он лови
 (эксп. 19). Подробности и все 22 эксперимента — в
 [docs/experiments.md](docs/experiments.md).
 
-## Установка
+### Установка
 
 ```bash
 pip install -e .                 # numpy, scipy, pandas, matplotlib
@@ -47,7 +223,7 @@ pip install -e ".[dev]"          # + pytest и river для тестов
 pip install -e ".[datasets]"     # + river и scikit-learn для реальных наборов данных
 ```
 
-## Быстрый старт
+### Быстрый старт
 
 Монитор принимает на каждом шаге ошибку (или потерю) каждой модели и возвращает модели,
 которые пора переобучать:
@@ -91,7 +267,7 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 
 ![Демонстрация](results/figures/demo.png)
 
-## Рекомендуемая конфигурация
+### Рекомендуемая конфигурация
 
 | что | рекомендация | почему |
 |---|---|---|
@@ -103,7 +279,7 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 | правило | `"bonferroni"` или `"bh_window"`; при связанных моделях — с `split_common=True` | Бонферрони держит уровень при любой корреляции моделей (эксп. 13), BH быстрее при массовых дрейфах (эксп. 4); с `split_common` лучший F1 на всём бенчмарке, выигрыш растёт с корреляцией (эксп. 18, 21) |
 | не рекомендуется | ADWIN при строгих уровнях, DDM, LORD/SAFFRON, e-BH | хвост ADWIN антиконсервативен (эксп. 10); DDM слабый; онлайн-FDR медленнее при равном числе ложных (эксп. 3, 12); e-BH пропускает треть дрейфов (эксп. 13) |
 
-## Как это работает
+### Как это работает
 
 1. **Детектор как непрерывный скор.** У каждого детектора один параметр чувствительности, а
    бинарный сигнал — это порог на внутренней статистике. Эту статистику и берём; для
@@ -117,45 +293,48 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 
 Подробное описание — [docs/method.md](docs/method.md); связь с литературой —
 [docs/related_work.md](docs/related_work.md); справочник по всем классам, методам и
-функциям — [docs/api.md](docs/api.md).
+функциям (на английском) — [docs/api.md](docs/api.md).
 
-## Ограничения
+### Ограничения
 
 - Уровень ложных тревог выдерживается для PH, KS и MeanShift; у ADWIN калибровка хвоста
   антиконсервативна примерно втрое.
-- Выводы получены на синтетике и четырёх открытых наборах данных; проверки на продовых
-  логах не было.
+- Выводы получены на синтетике, четырёх открытых наборах данных и часовых курсах валют; проверки
+  на продовых логах не было, и модели не переобучаются по-настоящему (тревога лишь запускает
+  сбор нового опорного отрезка).
 - Гарантии поправок выведены для независимых p-значений; при сильно коррелированных моделях
   надёжнее Бонферрони.
+- На шумном сигнале (например, дневная потеря моделей волатильности на курсах валют) ловятся
+  только существенные ухудшения: рост меньше ~15% неотличим от шума (эксп. 22).
 - Полный список — в [docs/experiments.md](docs/experiments.md#ограничения).
 
-## Структура репозитория
+### Структура репозитория
 
 ```
 src/driftfdr/
-  streaming.py     StreamingMonitor, CalibratedDetector, from_river
+  streaming.py     StreamingMonitor (включая split_common), CalibratedDetector, from_river
   detectors.py     Page-Hinkley, DDM, ADWIN, KS, скользящий KS, MeanShift как непрерывные скоры
   calibration.py   нулевые распределения, p-значения, хвост, допуск δ
   bootstrap.py     блочный, стационарный и AR-sieve бутстреп
   online_fdr.py    Бонферрони, BH, BH Стори, e-BH в окне; BatchBH, LORD++, SAFFRON, LOND, alpha-investing
-  preprocess.py    усреднение по временным корзинам, допуск из стоимости переобучения
+  preprocess.py    усреднение по временным корзинам, допуск из стоимости переобучения, split_common
   monitor.py       пакетный прогон мониторинга по готовым рядам (для экспериментов)
-  metrics.py       FDR, задержки, пропуски, цена задержки
-  streams.py       синтетические сценарии с известными точками дрейфа
-  datasets.py      парки моделей на INSECTS, Electricity, Airlines, Covertype
+  metrics.py       FDR, задержки, пропуски, цена задержки, событийные точность / полнота / F1
+  streams.py       синтетические сценарии с известными точками дрейфа, бенчмарк benchmark_suite
+  datasets.py      парки моделей на INSECTS, Electricity, Airlines, Covertype и часовых курсах валют
 experiments/       22 эксперимента (exp1…exp22)
-results/           таблицы и графики экспериментов
+results/           таблицы и графики экспериментов, страница демонстрации
 docs/              метод, справочник API (генерируется: python docs/gen_api.py), журнал экспериментов
 tests/             76 тестов: совпадение с river, бутстреп, калибровка, процедуры, потоковый режим
-examples/          пример онлайн-мониторинга
+examples/          пример онлайн-мониторинга и демонстрация с проигрыванием
 ```
 
-## Тесты и воспроизведение
+### Тесты и воспроизведение
 
 ```bash
-pytest                                         # ~10 с
+pytest                                         # ~15 с
 python experiments/exp1_calibration.py --quick # любой эксперимент; без --quick — полный прогон
 ```
 
 Эксперименты используют фиксированные сиды и закреплённые настройки, поэтому воспроизводятся;
-полный прогон каждого занимает от нескольких минут до 40 минут на 4 ядрах.
+полный прогон каждого занимает от нескольких минут до часа на 4 ядрах.
