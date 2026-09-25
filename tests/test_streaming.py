@@ -200,3 +200,21 @@ def test_sequential_monitor_alarms_between_window_ends_and_survives_save(tmp_pat
     first.save(tmp_path / "seq.npz")
     loaded = StreamingMonitor.load(tmp_path / "seq.npz", detector_factory=ECUSUM)
     assert part + _feed(loaded, sc.values, 450, 900) == alarms
+
+
+def test_sequential_ecusum_looks_back_like_the_windowed_statistic():
+    from driftfdr import ECUSUM
+
+    rng = np.random.default_rng(3)
+    n_ref, w, h, n = 200, 50, 3, 8
+    x = rng.normal(size=n_ref + n * w).cumsum() * 0.02 + rng.normal(size=n_ref + n * w)
+    det = ECUSUM()
+    state, scores = det.start_stream(x[:n_ref]), []
+    for i, v in enumerate(x[n_ref:]):
+        if i and i % w == 0:
+            state.roll(h)
+        scores.append(state.update(v))
+    stream = np.array(scores).reshape(n, w).max(axis=1)
+    batch = [det.window_statistics(np.concatenate([x[:n_ref], x[n_ref + max(0, k - h + 1) * w : n_ref + (k + 1) * w]])[None],
+                                   n_ref, w)[0, -1] for k in range(n)]
+    np.testing.assert_allclose(stream, batch, rtol=1e-3)  # equal up to the first AR lags of each look-back

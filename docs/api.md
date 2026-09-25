@@ -418,9 +418,19 @@ ECUSUMState(mu, coef, sd, lags, lambdas, cusums)
 
 Running state of an ``ECUSUM`` after its reference; plain floats, so updates are cheap.
 
+To match the windowed statistic exactly, the state keeps one CUSUM per window
+start within the look-back (``roll`` adds one at each new window and drops the
+oldest beyond ``horizon``); the score is that of the oldest, which dominates the
+others. A CUSUM left to run forever would slowly accumulate the small bias left
+by estimating the reference mean, and false alarms would grow with time.
+
+- **`roll(horizon: int) -> None`** 
+
+  Start a CUSUM at the current step (a new window) and keep at most ``horizon``.
+
 - **`update(x: float) -> float`** 
 
-  Add one observation; return the current score (log of the mixture e-detector).
+  Add one observation; return the score (log mixture e-detector of the oldest CUSUM).
 
 - **`to_dict() -> dict`** 
 - **`from_dict(data: dict) -> ECUSUMState`** *(classmethod)* 

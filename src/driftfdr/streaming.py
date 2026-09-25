@@ -101,6 +101,8 @@ class CalibratedDetector:
             return None
         self._since_reference += 1
         if self.sequential:
+            if self._since_reference > 1 and (self._since_reference - 1) % self.window == 0:
+                self._stream.roll(self.horizon)  # look back over at most `horizon` windows, as calibrated
             score = self._stream.update(float(x))
             seen = min(-(-self._since_reference // self.window), self.horizon)
             return "p", self._nulls[seen - 1].pvalue_scalar(score)

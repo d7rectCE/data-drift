@@ -440,7 +440,7 @@ class ECUSUM(Detector):
         sd = e[p:].std()
         return ECUSUMState(mu=float(mu), coef=[float(v) for v in a], sd=float(sd) if sd > 0 else 1.0,
                            lags=[float(v) for v in d[::-1][:p]], lambdas=list(self.lambdas),
-                           cusums=[0.0] * len(self.lambdas))
+                           cusums=[[0.0] * len(self.lambdas)])
 
     def load_stream(self, data: dict) -> "ECUSUMState":
         """Restore a state saved with ``ECUSUMState.to_dict``."""
@@ -451,16 +451,30 @@ class ECUSUM(Detector):
 
 
 class ECUSUMState:
-    """Running state of an ``ECUSUM`` after its reference; plain floats, so updates are cheap."""
+    """Running state of an ``ECUSUM`` after its reference; plain floats, so updates are cheap.
+
+    To match the windowed statistic exactly, the state keeps one CUSUM per window
+    start within the look-back (``roll`` adds one at each new window and drops the
+    oldest beyond ``horizon``); the score is that of the oldest, which dominates the
+    others. A CUSUM left to run forever would slowly accumulate the small bias left
+    by estimating the reference mean, and false alarms would grow with time.
+    """
 
     __slots__ = ("mu", "coef", "sd", "lags", "lambdas", "cusums")
 
     def __init__(self, mu, coef, sd, lags, lambdas, cusums):
         self.mu, self.coef, self.sd = mu, coef, sd
-        self.lags, self.lambdas, self.cusums = lags, lambdas, cusums
+        self.lags, self.lambdas = lags, lambdas
+        self.cusums = cusums if cusums and isinstance(cusums[0], list) else [list(cusums)]
+
+    def roll(self, horizon: int) -> None:
+        """Start a CUSUM at the current step (a new window) and keep at most ``horizon``."""
+        self.cusums.append([0.0] * len(self.lambdas))
+        if len(self.cusums) > horizon:
+            self.cusums.pop(0)
 
     def update(self, x: float) -> float:
-        """Add one observation; return the current score (log of the mixture e-detector)."""
+        """Add one observation; return the score (log mixture e-detector of the oldest CUSUM)."""
         d = x - self.mu
         e = d
         lags = self.lags
@@ -470,17 +484,17 @@ class ECUSUMState:
             lags.insert(0, d)
             lags.pop()
         z = e / self.sd
-        cusums, top, total = self.cusums, 0.0, 0.0
-        for k, lam in enumerate(self.lambdas):
-            c = cusums[k] + lam * z - 0.5 * lam * lam
-            if c < 0.0:
-                c = 0.0
-            cusums[k] = c
-            if c > top:
-                top = c
-        for c in cusums:
+        steps = [lam * z - 0.5 * lam * lam for lam in self.lambdas]
+        for cusum in self.cusums:
+            for k, step in enumerate(steps):
+                c = cusum[k] + step
+                cusum[k] = c if c > 0.0 else 0.0
+        oldest = self.cusums[0]
+        top = max(oldest)
+        total = 0.0
+        for c in oldest:
             total += math.exp(c - top)
-        return top + math.log(total / len(cusums))
+        return top + math.log(total / len(oldest))
 
     def to_dict(self) -> dict:
         return {k: getattr(self, k) for k in self.__slots__}
