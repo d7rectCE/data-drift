@@ -1,5 +1,7 @@
 # driftfdr
 
+[![tests](https://github.com/d7rectCE/data-drift-fdr/actions/workflows/tests.yml/badge.svg)](https://github.com/d7rectCE/data-drift-fdr/actions/workflows/tests.yml)
+
 **English** · [Русский](#русский)
 
 ## English
@@ -42,15 +44,17 @@ did not get worse. NannyML's performance monitoring is about as accurate as drif
 correction for fleet size and the tolerated degradation are explicit. Monitoring is as fast as
 the river detector itself (about 1 µs per step per model); calibration takes a fraction of a
 second per model after each retrain (experiment 19). Details and all 24 experiments are in
-[docs/experiments.md](docs/experiments.md).
+[docs/experiments.md](https://github.com/d7rectCE/data-drift-fdr/blob/main/docs/experiments.md).
 
 ### Installation
 
 ```bash
-pip install -e .                 # numpy, scipy, pandas, matplotlib
-pip install -e ".[dev]"          # + pytest and river for the tests
-pip install -e ".[datasets]"     # + river and scikit-learn for the real data sets
+pip install driftfdr                 # numpy, scipy, pandas, matplotlib
+pip install "driftfdr[prometheus]"   # + an integration: prometheus, mlflow or nannyml
 ```
+
+From a clone of the repository: `pip install -e ".[dev]"` (tests) or `pip install -e ".[datasets]"`
+(river and scikit-learn for the real data sets used in the experiments).
 
 ### Quick start
 
@@ -96,9 +100,9 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 - Full example: `examples/streaming_demo.py`. Visual demo: `examples/live_demo.py` — 40 correlated
   models, a common spike and a fleet-wide event; river at its defaults retrains 293 times
   (248 wasted), driftfdr 10 times (1 wasted) plus one fleet alarm. The output,
-  [results/demo.html](results/demo.html), replays step by step in a browser.
+  [results/demo.html](https://github.com/d7rectCE/data-drift-fdr/blob/main/results/demo.html), replays step by step in a browser.
 
-![Demo](results/figures/demo.png)
+![Demo](https://raw.githubusercontent.com/d7rectCE/data-drift-fdr/main/results/figures/demo.png)
 
 ### Integrations
 
@@ -106,9 +110,9 @@ Optional adapters in `driftfdr.integrations`; each needs its own extra and nothi
 
 | where | what | install |
 |---|---|---|
-| Prometheus | `PrometheusExporter(monitor).serve(8000)` publishes p-values, alarms and fleet alarms; alert rules in `examples/prometheus/alerts.yml` | `pip install -e ".[prometheus]"` |
-| MLflow | `MLflowReporter(monitor, run_id=..., model_versions={id: (name, version)})` logs p-values to a run and tags the registered version of an alarmed model with `driftfdr_retrain` | `pip install -e ".[mlflow]"` |
-| NannyML | `cbpe_estimated_error(reference, analysis, chunk_size)`: a label-free error estimate to monitor while labels are delayed; it relies on calibrated probabilities and cannot see changes in p(y\|X), and on Electricity it failed (exp. 24): check it against the true error first | `pip install -e ".[nannyml]"` |
+| Prometheus | `PrometheusExporter(monitor).serve(8000)` publishes p-values, alarms and fleet alarms; alert rules in `examples/prometheus/alerts.yml` | `driftfdr[prometheus]` |
+| MLflow | `MLflowReporter(monitor, run_id=..., model_versions={id: (name, version)})` logs p-values to a run and tags the registered version of an alarmed model with `driftfdr_retrain` | `driftfdr[mlflow]` |
+| NannyML | `cbpe_estimated_error(reference, analysis, chunk_size)`: a label-free error estimate to monitor while labels are delayed; it relies on calibrated probabilities and cannot see changes in p(y\|X), and on Electricity it failed (exp. 24): check it against the true error first | `driftfdr[nannyml]` |
 
 `examples/prometheus_service.py` runs the monitor as a small service: it reads errors, exposes
 metrics, saves its state on exit and resumes from it. Evidently's drift tests are not wrapped: they
@@ -140,9 +144,9 @@ worse (exp. 17), and a multiplicity correction over invalid p-values does not fi
 3. **A fleet-level decision.** The p-values of all models whose window has ended go through a
    multiplicity correction; alarmed models are retrained and collect a new reference.
 
-The method: [docs/method.md](docs/method.md); the relation to the literature:
-[docs/related_work.md](docs/related_work.md); the reference for every class, method and function:
-[docs/api.md](docs/api.md). Every document except the API reference also has a Russian version
+The method: [docs/method.md](https://github.com/d7rectCE/data-drift-fdr/blob/main/docs/method.md); the relation to the literature:
+[docs/related_work.md](https://github.com/d7rectCE/data-drift-fdr/blob/main/docs/related_work.md); the reference for every class, method and function:
+[docs/api.md](https://github.com/d7rectCE/data-drift-fdr/blob/main/docs/api.md). Every document except the API reference also has a Russian version
 (`*.ru.md`).
 
 ### Limitations
@@ -156,7 +160,7 @@ The method: [docs/method.md](docs/method.md); the relation to the literature:
   Bonferroni is the safer choice.
 - On noisy signals (for example, the daily loss of FX volatility models) only material
   degradations are caught: rises of less than ~15% are indistinguishable from noise (exp. 22).
-- The full list is in [docs/experiments.md](docs/experiments.md#limitations).
+- The full list is in [docs/experiments.md](https://github.com/d7rectCE/data-drift-fdr/blob/main/docs/experiments.md#limitations).
 
 ### Repository layout
 
@@ -176,7 +180,7 @@ src/driftfdr/
 experiments/       24 experiments (exp1…exp24)
 results/           tables and figures of the experiments, the demo page
 docs/              method, related work, experiment log (English and *.ru.md), API reference (generated: python docs/gen_api.py)
-tests/             83 tests: agreement with river, bootstrap, calibration, procedures, streaming
+tests/             83 tests (CI on Python 3.10–3.12): agreement with river, bootstrap, calibration, procedures, streaming
 examples/          online monitoring, the replayable demo, a Prometheus service with alert rules
 ```
 
@@ -192,7 +196,7 @@ each takes from a few minutes to about an hour on 4 cores.
 
 ### License
 
-Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright 2026 Artem Deviatov.
+Apache License 2.0, see [LICENSE](https://github.com/d7rectCE/data-drift-fdr/blob/main/LICENSE) and [NOTICE](https://github.com/d7rectCE/data-drift-fdr/blob/main/NOTICE). Copyright 2026 Artem Deviatov.
 The data sets are downloaded by the loaders and keep their own licenses; they are not part of
 this repository.
 
@@ -239,15 +243,17 @@ driftfdr 0.88, у Page-Hinkley river по умолчанию 0.06: он лови
 ухудшение задаются явно. По скорости мониторинг не медленнее самого детектора river (около 1 мкс
 на шаг на модель); калибровка занимает доли секунды на модель после каждого переобучения
 (эксп. 19). Подробности и все 24 эксперимента — в
-[docs/experiments.ru.md](docs/experiments.ru.md).
+[docs/experiments.ru.md](https://github.com/d7rectCE/data-drift-fdr/blob/main/docs/experiments.ru.md).
 
 ### Установка
 
 ```bash
-pip install -e .                 # numpy, scipy, pandas, matplotlib
-pip install -e ".[dev]"          # + pytest и river для тестов
-pip install -e ".[datasets]"     # + river и scikit-learn для реальных наборов данных
+pip install driftfdr                 # numpy, scipy, pandas, matplotlib
+pip install "driftfdr[prometheus]"   # + интеграция: prometheus, mlflow или nannyml
 ```
+
+Из клона репозитория: `pip install -e ".[dev]"` (тесты) или `pip install -e ".[datasets]"`
+(river и scikit-learn для реальных наборов данных из экспериментов).
 
 ### Быстрый старт
 
@@ -293,9 +299,9 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 - Полный пример — `examples/streaming_demo.py`. Наглядная демонстрация — `examples/live_demo.py`:
   40 связанных моделей, общий всплеск и событие во всём парке; river по умолчанию делает 293
   переобучения (248 впустую), driftfdr — 10 (1 впустую) и одну тревогу парка. Результат —
-  [results/demo.html](results/demo.html), открывается в браузере с проигрыванием по шагам.
+  [results/demo.html](https://github.com/d7rectCE/data-drift-fdr/blob/main/results/demo.html), открывается в браузере с проигрыванием по шагам.
 
-![Демонстрация](results/figures/demo.png)
+![Демонстрация](https://raw.githubusercontent.com/d7rectCE/data-drift-fdr/main/results/figures/demo.png)
 
 ### Интеграции
 
@@ -304,9 +310,9 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 
 | куда | что | установка |
 |---|---|---|
-| Prometheus | `PrometheusExporter(monitor).serve(8000)` публикует p-значения, тревоги и тревоги парка; правила алертов — `examples/prometheus/alerts.yml` | `pip install -e ".[prometheus]"` |
-| MLflow | `MLflowReporter(monitor, run_id=..., model_versions={id: (name, version)})` пишет p-значения в run и ставит тег `driftfdr_retrain` на зарегистрированную версию модели с тревогой | `pip install -e ".[mlflow]"` |
-| NannyML | `cbpe_estimated_error(reference, analysis, chunk_size)`: оценка ошибки без меток, чтобы мониторить, пока метки задерживаются; опирается на откалиброванные вероятности, изменений p(y\|X) не видит, на Electricity не сработала (эксп. 24) — сначала сверьте её с настоящей ошибкой | `pip install -e ".[nannyml]"` |
+| Prometheus | `PrometheusExporter(monitor).serve(8000)` публикует p-значения, тревоги и тревоги парка; правила алертов — `examples/prometheus/alerts.yml` | `driftfdr[prometheus]` |
+| MLflow | `MLflowReporter(monitor, run_id=..., model_versions={id: (name, version)})` пишет p-значения в run и ставит тег `driftfdr_retrain` на зарегистрированную версию модели с тревогой | `driftfdr[mlflow]` |
+| NannyML | `cbpe_estimated_error(reference, analysis, chunk_size)`: оценка ошибки без меток, чтобы мониторить, пока метки задерживаются; опирается на откалиброванные вероятности, изменений p(y\|X) не видит, на Electricity не сработала (эксп. 24) — сначала сверьте её с настоящей ошибкой | `driftfdr[nannyml]` |
 
 `examples/prometheus_service.py` запускает монитор как небольшой сервис: читает ошибки, отдаёт
 метрики, сохраняет состояние при остановке и продолжает с него. Тесты дрейфа Evidently не
@@ -337,9 +343,9 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 3. **Решение по парку.** p-значения всех моделей, у которых закончилось окно, проходят через
    поправку на множественность; модели с тревогой переобучаются и собирают новый опорный отрезок.
 
-Подробное описание — [docs/method.ru.md](docs/method.ru.md); связь с литературой —
-[docs/related_work.ru.md](docs/related_work.ru.md); справочник по всем классам, методам и
-функциям (только на английском) — [docs/api.md](docs/api.md). У каждого документа, кроме
+Подробное описание — [docs/method.ru.md](https://github.com/d7rectCE/data-drift-fdr/blob/main/docs/method.ru.md); связь с литературой —
+[docs/related_work.ru.md](https://github.com/d7rectCE/data-drift-fdr/blob/main/docs/related_work.ru.md); справочник по всем классам, методам и
+функциям (только на английском) — [docs/api.md](https://github.com/d7rectCE/data-drift-fdr/blob/main/docs/api.md). У каждого документа, кроме
 справочника API, есть английская версия (без `.ru` в имени).
 
 ### Ограничения
@@ -353,7 +359,7 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
   надёжнее Бонферрони.
 - На шумном сигнале (например, дневная потеря моделей волатильности на курсах валют) ловятся
   только существенные ухудшения: рост меньше ~15% неотличим от шума (эксп. 22).
-- Полный список — в [docs/experiments.ru.md](docs/experiments.ru.md#ограничения).
+- Полный список — в [docs/experiments.ru.md](https://github.com/d7rectCE/data-drift-fdr/blob/main/docs/experiments.ru.md#ограничения).
 
 ### Структура репозитория
 
@@ -373,7 +379,7 @@ src/driftfdr/
 experiments/       24 эксперимента (exp1…exp24)
 results/           таблицы и графики экспериментов, страница демонстрации
 docs/              метод, связанные работы, журнал экспериментов (английский и *.ru.md), справочник API (генерируется: python docs/gen_api.py)
-tests/             83 теста: совпадение с river, бутстреп, калибровка, процедуры, потоковый режим
+tests/             83 теста (CI на Python 3.10–3.12): совпадение с river, бутстреп, калибровка, процедуры, потоковый режим
 examples/          онлайн-мониторинг, демонстрация с проигрыванием, сервис для Prometheus с правилами алертов
 ```
 
@@ -389,5 +395,5 @@ python experiments/exp1_calibration.py --quick # любой эксперимен
 
 ### Лицензия
 
-Apache License 2.0, см. [LICENSE](LICENSE) и [NOTICE](NOTICE). Copyright 2026 Artem Deviatov.
+Apache License 2.0, см. [LICENSE](https://github.com/d7rectCE/data-drift-fdr/blob/main/LICENSE) и [NOTICE](https://github.com/d7rectCE/data-drift-fdr/blob/main/NOTICE). Copyright 2026 Artem Deviatov.
 Наборы данных скачиваются загрузчиками, остаются под своими лицензиями и в репозиторий не входят.

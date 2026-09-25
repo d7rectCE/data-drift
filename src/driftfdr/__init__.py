@@ -1,4 +1,6 @@
-"""Online FDR control on top of practical drift detectors for multi-model monitoring."""
+"""Calibrated p-values and multiplicity control on top of practical drift detectors, for fleets of ML models."""
+
+from importlib.metadata import PackageNotFoundError, version
 
 from .calibration import CalibrationConfig, NullDistribution, calibrate, calibrate_many
 from .detectors import (
@@ -79,3 +81,8 @@ __all__ = [
     "tolerance_from_cost",
     "split_common",
 ]
+
+try:
+    __version__ = version("driftfdr")
+except PackageNotFoundError:  # running from a source tree that is not installed
+    __version__ = "0.0.0"
