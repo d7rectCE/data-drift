@@ -17,6 +17,9 @@ Top-level exports: `ADWIN`, `AlphaInvesting`, `BHWindow`, `BatchBH`, `Bonferroni
 - [`driftfdr.metrics`](#driftfdrmetrics)
 - [`driftfdr.streams`](#driftfdrstreams)
 - [`driftfdr.datasets`](#driftfdrdatasets)
+- [`driftfdr.integrations.prometheus`](#driftfdrintegrationsprometheus)
+- [`driftfdr.integrations.mlflow`](#driftfdrintegrationsmlflow)
+- [`driftfdr.integrations.nannyml`](#driftfdrintegrationsnannyml)
 
 ## `driftfdr.streaming`
 
@@ -1387,3 +1390,100 @@ hours dropped; the mean hourly loss of that day), so the daily cycle of volatili
 does not look like drift (experiment 16). There are no
 drift labels: use ``with_material_null`` with ``forward_error`` of the loss.
 Model names are stored in ``drift_kind`` as ``"PAIR/model"``.
+
+## `driftfdr.integrations.prometheus`
+
+Publish a ``StreamingMonitor``'s state as Prometheus metrics.
+
+### `PrometheusExporter`
+
+```python
+PrometheusExporter(monitor, registry=None, prefix: str = 'driftfdr')
+```
+
+Wraps a ``StreamingMonitor`` and exposes its decisions as Prometheus metrics.
+
+Metrics (``prefix`` defaults to ``driftfdr``), labelled by ``model`` where it applies:
+
+* ``<prefix>_pvalue`` — the latest p-value of each model (set when one becomes ready);
+* ``<prefix>_alarms_total`` — alarms (retrain decisions) per model;
+* ``<prefix>_last_alarm_timestamp_seconds`` — when each model last alarmed;
+* ``<prefix>_calibrated`` — 1 once a model's reference is complete, 0 while collecting;
+* ``<prefix>_fleet_alarms_total`` — alarms of the common component (``split_common``);
+* ``<prefix>_models`` — number of monitored models.
+
+Use ``update`` instead of ``monitor.update``; ``serve(port)`` starts the HTTP endpoint
+Prometheus scrapes. Alert on ``increase(driftfdr_alarms_total[1h]) > 0``, see
+``examples/prometheus/``. Requires ``prometheus_client``.
+
+- **`update(observations)`** 
+
+  ``monitor.update(observations)``, then refresh the metrics; returns the alarmed models.
+
+- **`record(alarmed) -> None`** 
+
+  Refresh the metrics after a ``monitor.update`` made elsewhere that returned ``alarmed``.
+
+- **`forget(model_id) -> None`** 
+
+  Drop a removed model's series (call after ``monitor.remove_model``).
+
+- **`serve(port: int = 8000, addr: str = '0.0.0.0')`** 
+
+  Start the HTTP endpoint that Prometheus scrapes, in a background thread.
+
+## `driftfdr.integrations.mlflow`
+
+Log a ``StreamingMonitor``'s p-values to MLflow and tag alarmed model versions.
+
+### `MLflowReporter`
+
+```python
+MLflowReporter(monitor, run_id: str | None = None, model_versions=None, tag: str = 'driftfdr_retrain', client=None, tracking_uri: str | None = None)
+```
+
+Wraps a ``StreamingMonitor``: p-values go to an MLflow run, alarms to the model registry.
+
+* With ``run_id``, every p-value is logged as the metric ``pvalue.<model>`` and every
+  alarm as ``alarm.<model>`` = 1 (and ``fleet_alarm`` for the common component), with
+  the monitor's step as the MLflow step.
+* ``model_versions`` maps a monitored model to its registered model ``(name, version)``;
+  when it alarms, that version gets the tag ``tag`` (default ``driftfdr_retrain``) with
+  the time and p-value, which a retraining pipeline can query. After retraining, point
+  the model to its new version with ``set_version``.
+
+Use ``update`` instead of ``monitor.update``. Requires ``mlflow``; pass ``client`` to
+reuse an ``MlflowClient``.
+
+- **`set_version(model_id, name: str, version) -> None`** 
+
+  Registered model version that stands behind ``model_id`` from now on.
+
+- **`update(observations)`** 
+
+  ``monitor.update(observations)``, then report; returns the alarmed models.
+
+- **`record(alarmed) -> None`** 
+
+  Report the outcome of a ``monitor.update`` made elsewhere that returned ``alarmed``.
+
+## `driftfdr.integrations.nannyml`
+
+Label-free error estimates from NannyML's CBPE, as a signal to monitor.
+
+### `cbpe_estimated_error`
+
+```python
+cbpe_estimated_error(reference, analysis, chunk_size: int, y_pred_proba='y_pred_proba', y_pred='y_pred', y_true='y_true', problem_type: str = 'classification_binary') -> np.ndarray
+```
+
+Estimated error rate per chunk from NannyML's confidence-based performance estimation.
+
+CBPE is fitted on ``reference`` (a DataFrame with predictions, probabilities and
+labels) and estimates the accuracy of every ``chunk_size`` rows of ``analysis``
+without labels. Returns ``1 - estimated accuracy`` per chunk: one step of a series to
+feed to a ``StreamingMonitor`` while labels are delayed.
+
+CBPE assumes calibrated probabilities and no change in p(y|X): it cannot see real
+concept drift, only shifts in the inputs that make the model less confident
+(experiment 11 shows that the former is the harmful kind). Requires ``nannyml``.

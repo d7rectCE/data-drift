@@ -100,6 +100,21 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 
 ![Demo](results/figures/demo.png)
 
+### Integrations
+
+Optional adapters in `driftfdr.integrations`; each needs its own extra and nothing else changes.
+
+| where | what | install |
+|---|---|---|
+| Prometheus | `PrometheusExporter(monitor).serve(8000)` publishes p-values, alarms and fleet alarms; alert rules in `examples/prometheus/alerts.yml` | `pip install -e ".[prometheus]"` |
+| MLflow | `MLflowReporter(monitor, run_id=..., model_versions={id: (name, version)})` logs p-values to a run and tags the registered version of an alarmed model with `driftfdr_retrain` | `pip install -e ".[mlflow]"` |
+| NannyML | `cbpe_estimated_error(reference, analysis, chunk_size)`: a label-free error estimate to monitor while labels are delayed (it cannot see changes in p(y\|X)) | `pip install -e ".[nannyml]"` |
+
+`examples/prometheus_service.py` runs the monitor as a small service: it reads errors, exposes
+metrics, saves its state on exit and resumes from it. Evidently's drift tests are not wrapped: they
+assume independent observations and alarm in 20–78% of the windows where the model did not get
+worse (exp. 17), and a multiplicity correction over invalid p-values does not fix that.
+
 ### Recommended configuration
 
 | what | recommendation | why |
@@ -157,11 +172,12 @@ src/driftfdr/
   metrics.py       FDR, delays, misses, cost of delay, event-level precision / recall / F1
   streams.py       synthetic scenarios with known drift points, the 100-scenario benchmark_suite
   datasets.py      model fleets on INSECTS, Electricity, Airlines, Covertype and hourly FX rates
+  integrations/    Prometheus exporter, MLflow reporter, NannyML CBPE signal (optional)
 experiments/       23 experiments (exp1…exp23)
 results/           tables and figures of the experiments, the demo page
 docs/              method, related work, experiment log (English and *.ru.md), API reference (generated: python docs/gen_api.py)
-tests/             80 tests: agreement with river, bootstrap, calibration, procedures, streaming
-examples/          online monitoring example and the replayable demo
+tests/             83 tests: agreement with river, bootstrap, calibration, procedures, streaming
+examples/          online monitoring, the replayable demo, a Prometheus service with alert rules
 ```
 
 ### Tests and reproduction
@@ -281,6 +297,22 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 
 ![Демонстрация](results/figures/demo.png)
 
+### Интеграции
+
+Опциональные адаптеры в `driftfdr.integrations`; каждому нужна своя дополнительная зависимость,
+основной пакет не меняется.
+
+| куда | что | установка |
+|---|---|---|
+| Prometheus | `PrometheusExporter(monitor).serve(8000)` публикует p-значения, тревоги и тревоги парка; правила алертов — `examples/prometheus/alerts.yml` | `pip install -e ".[prometheus]"` |
+| MLflow | `MLflowReporter(monitor, run_id=..., model_versions={id: (name, version)})` пишет p-значения в run и ставит тег `driftfdr_retrain` на зарегистрированную версию модели с тревогой | `pip install -e ".[mlflow]"` |
+| NannyML | `cbpe_estimated_error(reference, analysis, chunk_size)`: оценка ошибки без меток, чтобы мониторить, пока метки задерживаются (изменения p(y\|X) она не видит) | `pip install -e ".[nannyml]"` |
+
+`examples/prometheus_service.py` запускает монитор как небольшой сервис: читает ошибки, отдаёт
+метрики, сохраняет состояние при остановке и продолжает с него. Тесты дрейфа Evidently не
+оборачиваются: они предполагают независимые наблюдения и тревожат в 20–78% окон, где модель не
+стала хуже (эксп. 17), а поправка на множественность поверх невалидных p-значений этого не исправит.
+
 ### Рекомендуемая конфигурация
 
 | что | рекомендация | почему |
@@ -337,11 +369,12 @@ src/driftfdr/
   metrics.py       FDR, задержки, пропуски, цена задержки, событийные точность / полнота / F1
   streams.py       синтетические сценарии с известными точками дрейфа, бенчмарк benchmark_suite
   datasets.py      парки моделей на INSECTS, Electricity, Airlines, Covertype и часовых курсах валют
+  integrations/    экспорт в Prometheus, отчёты в MLflow, сигнал NannyML CBPE (опционально)
 experiments/       23 эксперимента (exp1…exp23)
 results/           таблицы и графики экспериментов, страница демонстрации
 docs/              метод, связанные работы, журнал экспериментов (английский и *.ru.md), справочник API (генерируется: python docs/gen_api.py)
-tests/             80 тестов: совпадение с river, бутстреп, калибровка, процедуры, потоковый режим
-examples/          пример онлайн-мониторинга и демонстрация с проигрыванием
+tests/             83 теста: совпадение с river, бутстреп, калибровка, процедуры, потоковый режим
+examples/          онлайн-мониторинг, демонстрация с проигрыванием, сервис для Prometheus с правилами алертов
 ```
 
 ### Тесты и воспроизведение

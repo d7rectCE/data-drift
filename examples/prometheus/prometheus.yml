@@ -1,0 +1,11 @@
+# Minimal Prometheus configuration for examples/prometheus_service.py
+global:
+  scrape_interval: 15s
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: driftfdr
+    static_configs:
+      - targets: ["localhost:8000"]

@@ -1,0 +1,27 @@
+# Alert rules for the metrics of driftfdr.integrations.PrometheusExporter
+groups:
+  - name: driftfdr
+    rules:
+      - alert: ModelNeedsRetraining
+        expr: increase(driftfdr_alarms_total[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model {{ $labels.model }} degraded materially"
+          description: "driftfdr decided to retrain {{ $labels.model }} (false-alarm rate controlled across the fleet)."
+
+      - alert: FleetWideDrift
+        expr: increase(driftfdr_fleet_alarms_total[15m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "The errors of the whole fleet shifted"
+          description: "The common component alarmed (split_common): check shared data sources and feature pipelines before retraining every model."
+
+      - alert: DriftMonitorDown
+        expr: up{job="driftfdr"} == 0 or absent(driftfdr_models)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The drift monitor is not reporting"

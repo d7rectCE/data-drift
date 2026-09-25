@@ -24,6 +24,9 @@ MODULES = [
     "metrics",
     "streams",
     "datasets",
+    "integrations.prometheus",
+    "integrations.mlflow",
+    "integrations.nannyml",
 ]
 OUT = Path(__file__).with_name("api.md")
 
@@ -150,7 +153,7 @@ def generate() -> str:
         "",
         "## Contents",
         "",
-        *[f"- [`driftfdr.{m}`](#driftfdr{m})" for m in MODULES],
+        *[f"- [`driftfdr.{m}`](#driftfdr{m.replace('.', '')})" for m in MODULES],
         "",
     ]
     for m in MODULES:
