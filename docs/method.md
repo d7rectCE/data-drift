@@ -1,138 +1,139 @@
-# Как устроен метод
+# How the method works
 
-## 1. Детектор как непрерывный скор (`detectors.py`)
+**English** · [Русский](method.ru.md)
 
-У каждого практического детектора один гиперпараметр чувствительности: λ у
-Page-Hinkley, число сигм у DDM, δ у ADWIN, α у KS. Детектор срабатывает ровно
-тогда, когда внутренняя статистика пересекает порог, заданный этим
-гиперпараметром. Значит, бинарный сигнал — это пороговая версия непрерывного
-*скора*, и скор равен «минимальной чувствительности, при которой детектор бы
-сработал»:
+## 1. The detector as a continuous score (`detectors.py`)
 
-| Детектор | Скор | Порог river по умолчанию |
+Every practical detector has one sensitivity hyperparameter: λ for Page-Hinkley, the number of
+sigmas for DDM, δ for ADWIN, α for KS. The detector fires exactly when an internal statistic
+crosses the threshold set by that hyperparameter. The binary signal is therefore a thresholded
+version of a continuous *score*, and the score equals "the least sensitivity at which the
+detector would have fired":
+
+| Detector | Score | river's default threshold |
 |---|---|---|
-| Page-Hinkley | `m_t − min m_s`, кумулятивное отклонение от среднего | λ = 50 |
+| Page-Hinkley | `m_t − min m_s`, the cumulative deviation from the running mean | λ = 50 |
 | DDM | `(p_t + s_t − p_min) / s_min` | 3 |
-| ADWIN | `−ln δ*`, где δ* — наименьшее δ, при котором есть разрез окна | `−ln 0.002` |
-| KS | статистика Колмогорова–Смирнова «опорный отрезок vs новые данные» | критическое значение при α = 0.05 |
-| KS скользящий (`KSSliding`, в духе IKS) | наибольшее расстояние KS между опорным отрезком и скользящим окном последних наблюдений | — |
-| MeanShift(m) | минимум по последним m окнам превышения средней в окне над опорной (в единицах сигнала) | рост на 0.1 |
+| ADWIN | `−ln δ*`, where δ* is the smallest δ at which the window has a cut | `−ln 0.002` |
+| KS | Kolmogorov–Smirnov statistic, reference segment vs. the new data | critical value at α = 0.05 |
+| Sliding KS (`KSSliding`, in the spirit of IKS) | largest KS distance between the reference and a sliding window of the latest observations | — |
+| MeanShift(m) | minimum over the last m windows of the excess of the window mean over the reference mean (in signal units) | a rise of 0.1 |
 
-MeanShift не из river: это простейший тест сдвига среднего ошибки (при m = 1 — тест Rombouts–Wilms), а при m > 1 — требование
-устойчивости (ухудшение держится m окон подряд). При одном уровне ложных тревог он мощнее
-остальных детекторов на сдвиге среднего (эксп. 15), а MeanShift(3) не реагирует на кратковременные
-всплески (эксп. 9).
+MeanShift is not from river: it is the simplest test of a shift in the mean error (with m = 1,
+the test of Rombouts & Wilms), and with m > 1 it requires persistence (the degradation lasts m
+windows in a row). At an equal false-alarm rate it is more powerful than the other detectors on a
+shift in the mean (exp. 15), and MeanShift(3) ignores short-lived spikes (exp. 9).
 
-Page-Hinkley и DDM воспроизводят `river` точно: момент первой тревоги совпадает
-на всех тестовых потоках (`tests/test_detectors.py`). ADWIN использует критерий
-разреза из river на фиксированной геометрической сетке точек разреза вместо
-экспоненциальной гистограммы и срабатывает в пределах `clock = 32` шагов от river.
-Все скоры векторизованы по первой оси, так что тысячи бутстреп-реплик
-обрабатываются одним вызовом.
+Page-Hinkley and DDM reproduce `river` exactly: the first alarm falls on the same step on every
+test stream (`tests/test_detectors.py`). ADWIN uses river's cut criterion on a fixed geometric
+grid of split points instead of the exponential histogram; river checks for cuts only every
+`clock = 32` steps, so the alarm differs from river's by a few dozen steps (in the tests, from 64
+steps earlier to 32 steps later). All scores are vectorised over the first axis, so thousands of
+bootstrap replicates are processed in one call.
 
-Почему не работать с бинарным сигналом напрямую: чёрный ящик с одним порогом даёт
-p-значение из двух значений `{q, 1}`, где q — вероятность тревоги при нуле. Онлайн-процедуры
-FDR при сотнях потоков требуют уровней 1e-4…1e-7, до которых такое p-значение не
-дотягивается никогда.
+Why not work with the binary signal directly: a black box with one threshold gives a p-value
+with two values `{q, 1}`, where q is the probability of an alarm under the null. Online FDR
+procedures over hundreds of streams need levels of 1e-4…1e-7, which such a p-value never reaches.
 
-## 2. Схема теста (`monitor.py`)
+## 2. The test (`monitor.py`)
 
-Время делится на окна по `window` шагов (по умолчанию 100). У каждого потока есть
-опорный отрезок из `n_ref` шагов (300), собранный сразу после последнего
-(пере)обучения. В конце каждого окна детектор прогревается на опорном отрезке и
-прогоняется по последним `min(прошло, horizon)` окнам (горизонт — 5 окон);
-статистика теста — максимум скора в текущем окне. Горизонт позволяет свидетельству
-копиться, как у детектора, работающего в продакшене непрерывно; без него онлайн-FDR
-не находит почти ничего (см. [эксперименты](experiments.md#что-показал-этап-1)). После тревоги поток переобучается,
-следующие `n_ref` шагов собирается новый опорный отрезок, и поток в это время не
-мониторится.
+Time is split into windows of `window` steps (100 by default). Every stream has a reference
+segment of `n_ref` steps (300) collected right after its last (re)training. At the end of each
+window the detector is warmed up on the reference and run over the last `min(elapsed, horizon)`
+windows (the horizon is 5 windows); the test statistic is the maximum score within the current
+window. The horizon lets evidence accumulate, as in a detector running continuously in
+production; without it online FDR finds almost nothing (see [the experiments](experiments.md#what-stage-1-showed)).
+After an alarm the stream is retrained, a new reference is collected over the next `n_ref`
+steps, and the stream is not monitored meanwhile.
 
-Нулевая гипотеза задаётся через режимы: тест нулевой, если среднее потока постоянно
-на всём отрезке от начала опорного отрезка до конца окна. Это синтетическая версия
-«режимного» определения нуля.
+The null hypothesis is defined by regimes: a test is null if the stream's mean is constant over
+the whole span from the start of the reference to the end of the window. This is a synthetic
+version of the "regime" definition of the null.
 
-На реальных данных распределение плывёт всегда, и нуль «ничего не изменилось» почти всегда
-ложен (эксп. 8, 14). Поэтому основной нуль — **существенное ухудшение**: ошибка выросла не
-больше чем на допуск δ (`CalibrationConfig.tolerance`). При калибровке бутстреп-продолжение
-ряда сдвигается вверх на δ (для ошибок 0/1 — переворотом доли нулей), так что p-значение
-отвечает на вопрос «выросла ли ошибка больше чем на δ». Допуск выводится из цены
-переобучения: `tolerance_from_cost`. Истина на реальных данных — оракул будущей ошибки:
-тест нулевой, если ошибка за следующие 1000 шагов выросла не больше чем на δ
-(`error_rate_view`). Опорные отрезки, на которых тест невозможен (константный ряд, или доля
-ошибок + δ ≥ 1), получают p = 1.
+On real data the distribution always drifts, and the null "nothing changed" is almost always
+false (exp. 8, 14). The main null is therefore **material degradation**: the error rose by no
+more than a tolerance δ (`CalibrationConfig.tolerance`). During calibration the bootstrap
+continuation of the series is shifted up by δ (for 0/1 errors, some zeros are turned into ones
+so that the error rate rises by δ), so the p-value answers "did the error rise by more than δ".
+The tolerance follows from the cost of a retrain: `tolerance_from_cost`. The ground truth on real
+data is an oracle of future error: a test is null if the error over the next 1000 steps rose by
+no more than δ (`error_rate_view`). References on which no test is possible (a constant series,
+or an error rate + δ ≥ 1) get p = 1.
 
-## 3. Калибровка в p-значение (`calibration.py`, `bootstrap.py`)
+## 3. Calibration into a p-value (`calibration.py`, `bootstrap.py`)
 
-Нулевое распределение статистики оценивается по B бутстреп-рядам (по умолчанию 2000),
-ресемплированным из опорного отрезка: и псевдо-опорный отрезок, и псевдо-новые
-данные, чтобы их взаимная изменчивость соответствовала реальному тесту. Скоры
-каузальны, поэтому один прогон по ряду длины `n_ref + horizon·window` даёт нулевые
-распределения сразу для всех длин горизонта: одна калибровка на опорный отрезок.
+The null distribution of the statistic is estimated from B bootstrap series (2000 by default)
+resampled from the reference: both a pseudo-reference and pseudo-new data, so that their joint
+variability matches the real test. The scores are causal, so one pass over a series of length
+`n_ref + horizon·window` gives the null distributions for every horizon length at once: one
+calibration per reference.
 
-Схемы ресемплинга: блочный бутстреп Кюнша (`moving`), стационарный бутстреп
-Политиса–Романо (`stationary`), AR-sieve бутстреп Бюльмана (`sieve`), AR-sieve с учётом
-неопределённости оценки параметров (`sieve_pu`, по умолчанию: AR-модель переоценивается на
-каждой реплике) и обычный iid-бутстреп как контроль. Для бинарных ошибок используется
-блочный бутстреп (флаг берётся из данных). Длина блока выбирается по формуле Политиса–Уайта для
-AR(1)-приближения, порядок AR — по AIC.
+Resampling schemes: Künsch's moving-block bootstrap (`moving`), the Politis–Romano stationary
+bootstrap (`stationary`), Bühlmann's AR-sieve bootstrap (`sieve`), the AR-sieve with parameter
+uncertainty (`sieve_pu`, the default: the AR model is re-estimated on every replicate), and the
+plain iid bootstrap as a control. Binary errors use the block bootstrap (detected from the data).
+The block length follows the Politis–White formula for an AR(1) approximation; the AR order is
+chosen by AIC.
 
-p-значение — `(1 + #{T* ≥ T}) / (B + 1)`. Его минимум 1/(B+1) слишком велик для поправки на
-сотни моделей, поэтому когда превышений мало, p-значение экстраполируется по хвосту,
-подогнанному к верхней части бутстреп-выборки (подход Knijnenburg et al., 2009). По умолчанию
-хвост — обобщённое распределение Парето (`tail="gpd"`): с ним и B = 2000 уровень ложных тревог
-у PH и KS выдерживается в пределах погрешности, экспоненциальный хвост занижал его (эксп. 6, 10).
-У ADWIN хвост остаётся антиконсервативным примерно втрое: его статистика — максимум по
-многим разрезам.
+The p-value is `(1 + #{T* ≥ T}) / (B + 1)`. Its minimum 1/(B+1) is too large for a correction
+over hundreds of models, so when fewer than 10 bootstrap replicates reach the statistic, the
+p-value is extrapolated from a tail fitted to the top 10% of the bootstrap sample (the approach
+of Knijnenburg et al., 2009). By default the tail is a generalised Pareto distribution
+(`tail="gpd"`): with it and B = 2000 the false-alarm rate of PH and KS holds within the error
+bars, while the exponential tail understated it (exp. 6, 10). ADWIN's tail stays about three
+times anti-conservative: its statistic is a maximum over many cuts.
 
-## 4. Правила принятия решений (`online_fdr.py`)
+## 4. Decision rules (`online_fdr.py`)
 
-| Правило | Что контролирует |
+| Rule | What it controls |
 |---|---|
-| `uncorrected` | каждый поток на уровне α — текущая практика |
-| `bonferroni` | α/K в каждом окне: вероятность хотя бы одной ложной тревоги в окне |
-| `bh_window` | Бенджамини–Хохберг внутри окна: FDR в каждом окне |
-| `storey_bh` | адаптивный BH Стори внутри окна: FDR в каждом окне |
-| `e_bh` | e-BH внутри окна (e = 0.5/√p): FDR при любой зависимости |
-| `BatchBH` | BH внутри окна на уровнях, контролирующих FDR по всем окнам |
-| `LOND` | онлайн-FDR, устойчив к положительной зависимости (PRDS) |
-| `LORD++` | онлайн-FDR, «богатство» пополняется при каждом открытии |
-| `SAFFRON` | онлайн-FDR, адаптируется к доле нулевых гипотез |
+| `uncorrected` | every stream at level α — current practice |
+| `bonferroni` | α/K in every window: the probability of at least one false alarm in a window |
+| `bh_window` | Benjamini–Hochberg within a window: FDR in every window |
+| `storey_bh` | Storey's adaptive BH within a window: FDR in every window |
+| `e_bh` | e-BH within a window (e = 0.5/√p): FDR under any dependence |
+| `BatchBH` | BH within a window at levels that control FDR across all windows |
+| `LOND` | online FDR, valid under positive dependence (PRDS) |
+| `LORD++` | online FDR, the "wealth" is replenished at every discovery |
+| `SAFFRON` | online FDR, adapts to the share of null hypotheses |
 | `alpha-investing` | mFDR, Foster–Stine |
-| `raw` | детектор river с порогом по умолчанию, без калибровки |
+| `raw` | the river detector at its default threshold, no calibration |
 
-Онлайн-правила получают гипотезы окна в случайном порядке, не зависящем от p-значений.
+Online rules receive the hypotheses of a window in a random order that does not depend on the
+p-values.
 
-Рекомендация по итогам экспериментов: `bonferroni` — держит уровень при любой корреляции
-моделей (эксп. 13); `bh_window` — быстрее, когда дрейфы приходят кластерами (эксп. 4), но при
-коррелированных моделях только вместе с `split_common` (эксп. 18). Онлайн-FDR и e-BH медленнее
-при равном числе ложных тревог (эксп. 3, 12, 13).
+Recommendation from the experiments: `bonferroni` holds its level under any correlation between
+models (exp. 13); `bh_window` is faster when drifts come in clusters (exp. 4), but with correlated
+models only together with `split_common` (exp. 18). Online FDR and e-BH are slower at an equal
+number of false alarms (exp. 3, 12, 13).
 
-### Общий компонент парка (`preprocess.split_common`, `StreamingMonitor(split_common=True)`)
+### The fleet's common component (`preprocess.split_common`, `StreamingMonitor(split_common=True)`)
 
-Если ошибки моделей движутся вместе, общий всплеск сдвигает все p-значения разом и даёт пачку
-одновременных ложных тревог. Каждая модель стандартизуется по своему опорному отрезку;
-медиана стандартизованных значений по моделям в каждый момент — общий компонент, остаток —
-значение модели минус медиана. Детекторы моделей смотрят на остатки, а общий компонент
-проверяется своим калиброванным детектором в той же поправке; его тревога означает событие во
-всём парке (`fleet_alarm`). Медиана предполагает, что одновременно дрейфует меньше половины
-моделей. На реальных наборах корреляция p-значений между моделями 0.4–0.9, после
-`split_common` — 0.17–0.33 (эксп. 20).
+If the models' errors move together, a common spike shifts all p-values at once and produces a
+burst of simultaneous false alarms. Each model is standardised by its own reference; the
+cross-sectional median of the standardised values at each step is the common component, and a
+residual is the model's value minus the median. The models' detectors watch the residuals, and
+the common component is tested by its own calibrated detector in the same correction; its alarm
+means an event across the whole fleet (`fleet_alarm`). The median assumes that fewer than half of
+the models drift at once. On the real data sets the correlation of p-values between models is
+0.4–0.9, and 0.17–0.33 after `split_common` (exp. 20).
 
-## 5. Данные и метрики (`streams.py`, `metrics.py`)
+## 5. Data and metrics (`streams.py`, `metrics.py`)
 
-K потоков — сигналы ошибок K моделей: AR(1) во времени с коэффициентом φ и общим
-фактором между потоками с корреляцией ρ. У доли потоков в известный момент среднее
-сдвигается резко или постепенно (в единицах стандартного отклонения). Из того же
-латентного процесса строится бинарный сигнал ошибок для DDM (базовая доля ошибок 0.2).
+K streams are the error signals of K models: AR(1) in time with coefficient φ and a common factor
+across streams with correlation ρ. In a share of the streams the mean shifts at a known time,
+abruptly or gradually (in units of the standard deviation). A binary error signal for DDM is
+built from the same latent process (base error rate 0.2).
 
-Кроме сдвига среднего есть сценарий с признаком, меткой и моделью (`make_supervised_scenario`),
-где раздельно задаются сдвиг p(X), сдвиг p(y|X), оба сразу и циклический дрейф (эксп. 11), и
-фиксированный набор из 100 сценариев `benchmark_suite` (эксп. 21). Реальные данные — парки
-моделей на INSECTS, Electricity, Airlines и Covertype (`datasets.py`); `bucket_means` усредняет
-ошибки по временным корзинам (час, сутки), чтобы суточный цикл не выглядел как дрейф (эксп. 16).
+Besides the mean shift there is a scenario with a feature, a label and a model
+(`make_supervised_scenario`), where a shift in p(X), a shift in p(y|X), both at once and a cyclic
+drift are set separately (exp. 11), and the fixed suite of 100 scenarios `benchmark_suite`
+(exp. 21). The real data are fleets of models on INSECTS, Electricity, Airlines, Covertype and
+hourly FX rates (`datasets.py`); `bucket_means` averages errors over time buckets (hour, day) so
+that the daily cycle does not look like drift (exp. 16).
 
-Метрики (`summarize`): FDR (средний FDP по сценариям) и FDP внутри окна, ложные тревоги на окно,
-вероятность хотя бы одной ложной тревоги в окне, MTFA, доля пропущенных дрейфов (MDR), средняя
-задержка (MTD), MTR Бифета, событийные точность / полнота / F1 как в бенчмарке Cerqueira и др., и
-«шагов на старой модели после дрейфа» — задержка, где пропуск считается до конца потока.
-Последняя метрика — прямая цена задержки в прикладном смысле.
+Metrics (`summarize`): FDR (the mean FDP over scenarios) and the FDP within a window, false alarms
+per window, the probability of at least one false alarm in a window, MTFA, the share of missed
+drifts (MDR), the mean delay (MTD), Bifet's MTR, event-level precision / recall / F1 as in the
+benchmark of Cerqueira et al., and "steps on a stale model after a drift" — the delay with a miss
+counted until the end of the stream. The last one is the direct cost of delay in practice.

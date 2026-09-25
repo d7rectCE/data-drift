@@ -1,487 +1,484 @@
-# Эксперименты
+# Experiments
 
-Полный журнал экспериментов, на которых основаны настройки и рекомендации библиотеки. Каждый
-эксперимент запускается скриптом `experiments/expN_*.py` (в начале файла — постановка), пишет
-таблицы в `results/expN_tables.md` и графики в `results/figures/`. Команды — в конце файла.
+**English** · [Русский](experiments.ru.md)
 
-## Этап 1: калибровка и поправка на множественность
+The full log of the experiments behind the library's settings and recommendations. Each
+experiment is run by the script `experiments/expN_*.py` (the setting is described at the top of
+the file), writes tables to `results/expN_tables.md` and figures to `results/figures/`. The
+commands are at the end of this file. Tables and figure labels in `results/` are in Russian.
 
-Все цифры — на синтетике: сигналы ошибок моделей как AR(1) с φ = 0.5, у 10% потоков
-среднее в случайный момент сдвигается на одно стандартное отклонение, длина потока
-5000 шагов, окно 100, опорный отрезок 300, горизонт 5 окон, B = 500 бутстреп-реплик.
-FDR и прочие метрики усреднены по 10 независимым сценариям (эксперимент 2) или по 6
-(эксперимент 3). Полные таблицы — в `results/*.md`, сырые прогоны — в `results/*.csv`.
+## Stage 1: calibration and the multiplicity correction
 
-### Эксперимент 1. Держат ли калиброванные p-значения уровень
+All numbers are on synthetic data: model error signals as AR(1) with φ = 0.5, in 10% of the
+streams the mean shifts by one standard deviation at a random time, streams of 5000 steps, window
+100, reference 300, horizon 5 windows, B = 500 bootstrap replicates. FDR and other metrics are
+averaged over 10 independent scenarios (experiment 2) or 6 (experiment 3). Full tables are in
+`results/*.md`, raw runs in `results/*.csv`.
 
-![Калибровка p-значений](../results/figures/exp1_calibration.png)
+### Experiment 1. Do the calibrated p-values hold their level
 
-1000 стационарных потоков × 20 окон на ячейку. Чем ближе линия к серой диагонали,
-тем точнее калибровка. Без автокорреляции (φ = 0) все схемы на месте. При φ ≥ 0.5
-iid-бутстреп теряет контроль полностью, блочный заметно антиконсервативен
-(в 1.5–3.5 раза), AR-sieve ближе всего к номиналу. Самое трудное место — глубокий хвост:
-при α = 0.001 sieve ошибается для PH и KS в 1.3–3 раза, для ADWIN в 5–8 раз. Именно
-такие уровни нужны онлайн-FDR при сотнях потоков, поэтому хвост — главное узкое место
-калибровки.
+![Calibration of p-values](../results/figures/exp1_calibration.png)
 
-![Бенчмарк при едином FAR](../results/figures/exp1_benchmark.png)
+1000 stationary streams × 20 windows per cell. The closer a line is to the grey diagonal, the
+more accurate the calibration. Without autocorrelation (φ = 0) all schemes are on target. At
+φ ≥ 0.5 the iid bootstrap loses control completely, the block bootstrap is noticeably
+anti-conservative (1.5–3.5 times), and the AR-sieve comes closest to nominal. The hardest part is
+the deep tail: at α = 0.001 the sieve is off by a factor of 1.3–3 for PH and KS and 5–8 for
+ADWIN. These are exactly the levels online FDR needs over hundreds of streams, so the tail is the
+main bottleneck of calibration.
 
-Половина потоков сдвигается в известный момент, φ = 0.5. На порогах river PH и ADWIN
-выглядят одинаково мощными (обнаружение 1.00), но при FAR 0.34 и 0.15 соответственно.
-После калибровки к единому FAR ≈ 0.05 порядок такой: ADWIN 0.99, PH 0.83, KS 0.33,
-DDM 0.26. Преимущество ADWIN частично объясняется тем, что его калибровка чуть
-антиконсервативна (FAR 0.084). DDM после калибровки самый слабый: доля ошибок у него
-считается от начала потока и медленно реагирует на сдвиг.
+![Benchmark at an equal FAR](../results/figures/exp1_benchmark.png)
 
-### Эксперимент 2. Что происходит с ростом числа потоков
+Half of the streams shift at a known time, φ = 0.5. At river's thresholds PH and ADWIN look
+equally powerful (detection 1.00), but at an FAR of 0.34 and 0.15 respectively. After calibration
+to a common FAR ≈ 0.05 the order is: ADWIN 0.99, PH 0.83, KS 0.33, DDM 0.26. ADWIN's advantage is
+partly due to its slightly anti-conservative calibration (FAR 0.084). DDM is the weakest after
+calibration: its error rate is counted from the start of the stream and reacts slowly to a shift.
 
-![Масштабирование по числу потоков](../results/figures/exp2_scaling_rho0.3.png)
+### Experiment 2. What happens as the number of streams grows
 
-Page-Hinkley, уровень 0.05 у всех правил. Без поправки доля ложных среди тревог
-стабильно около 0.8 при любом K, а вероятность хотя бы одной ложной тревоги в окне
-растёт с 0.12 при K = 10 до 0.81 при K = 500. LORD++ держит FDR не выше 0.05 при всех
-K. Бонферрони держит вероятность ложной тревоги в окне ниже 0.05, но его FDR при малых
-K высок (0.47 при K = 10), потому что тревог там мало и одна ложная весит много. Цена
-поправки — задержка: 330 шагов на старой модели у LORD++ и 275 у Бонферрони против
-132 без поправки при K = 500. LOND слишком консервативен и пропускает 10% дрейфов.
-У alpha-investing задержка 630–870 шагов и пропуски до 20%.
-Вариант с независимыми потоками: `results/figures/exp2_scaling_rho0.png`.
+![Scaling with the number of streams](../results/figures/exp2_scaling_rho0.3.png)
 
-![Зависимость между потоками](../results/figures/exp2_dependence.png)
+Page-Hinkley, level 0.05 for every rule. Without a correction the share of false alarms among
+alarms stays around 0.8 at any K, and the probability of at least one false alarm in a window
+grows from 0.12 at K = 10 to 0.81 at K = 500. LORD++ keeps FDR at or below 0.05 for every K.
+Bonferroni keeps the probability of a false alarm in a window below 0.05, but its FDR is high at
+small K (0.47 at K = 10), because alarms are few there and a single false one weighs a lot. The
+price of the correction is delay: 330 steps on a stale model for LORD++ and 275 for Bonferroni
+against 132 without a correction at K = 500. LOND is too conservative and misses 10% of the
+drifts. Alpha-investing has a delay of 630–870 steps and misses up to 20%. The variant with
+independent streams: `results/figures/exp2_scaling_rho0.png`.
 
-Одни и те же правила при независимых (ρ = 0) и коррелированных (ρ = 0.3) потоках,
-K = 500. У коррелированных потоков общий фактор и общий начальный опорный период
-сдвигают p-значения всех потоков разом. Отсюда пачки ложных тревог, которые
-предсказывал обзор. Процедуры, чья гарантия опирается на независимость (SAFFRON,
-alpha-investing), и BH в окне теряют контроль. LORD++, LOND и Бонферрони держатся.
+![Dependence between streams](../results/figures/exp2_dependence.png)
 
-Точка безубыточности относительно правила без поправки на уровне 0.05 (ρ = 0.3): все
-правила экономят 5–6 ложных переобучений на каждый дрейф, а платят за каждое
-сэкономленное переобучение:
+The same rules with independent (ρ = 0) and correlated (ρ = 0.3) streams, K = 500. In correlated
+streams the common factor and the shared initial reference period shift the p-values of all
+streams at once. Hence the bursts of false alarms that the review predicted. Procedures whose
+guarantee relies on independence (SAFFRON, alpha-investing) and BH within a window lose control.
+LORD++, LOND and Bonferroni hold.
 
-| K | BH в окне | Бонферрони в окне | LORD++ | LOND |
+The break-even point against the uncorrected rule at level 0.05 (ρ = 0.3): every rule saves 5–6
+false retrains per drift, and pays for each saved retrain:
+
+| K | BH within a window | Bonferroni within a window | LORD++ | LOND |
 |---|---|---|---|---|
 | 10 | 4 | 4 | 66 | 49 |
 | 100 | 13 | 13 | 47 | 78 |
 | 500 | 20 | 25 | 34 | 94 |
 
-Числа — шаги работы на деградировавшей модели. Поправка окупается, если ложное
-переобучение стоит больше этого числа шагов. Обратите внимание, что на малых K
-правило без поправки само по себе не быстрое: ложная тревога ставит поток на паузу на
-время сбора нового опорного отрезка, и если в эту паузу приходится дрейф, задержка
-растёт.
+The numbers are steps spent on a degraded model. The correction pays off if a false retrain costs
+more than that many steps. Note that at small K the uncorrected rule is not fast by itself: a
+false alarm pauses the stream while a new reference is collected, and if a drift falls into that
+pause, the delay grows.
 
-Сравнение детекторов при K = 100: после калибровки PH даёт лучший баланс. Хвост
-p-значений ADWIN антиконсервативен настолько, что даже Бонферрони даёт FDR 0.48, а
-LORD++ — 0.24. KS держит FDR 0.07 у LORD++, но с Бонферрони и BH он медленнее PH
-(около 295 шагов против 210). DDM с поправками почти ничего не находит. Подробности — в `results/exp2_tables.md`.
+Comparison of detectors at K = 100: after calibration PH gives the best balance. ADWIN's p-value
+tail is so anti-conservative that even Bonferroni gives an FDR of 0.48, and LORD++ 0.24. KS keeps
+FDR at 0.07 with LORD++, but with Bonferroni and BH it is slower than PH (about 295 steps against
+210). DDM finds almost nothing with corrections. Details: `results/exp2_tables.md`.
 
-### Эксперимент 3. Граница компромисса
+### Experiment 3. The trade-off frontier
 
-![Компромисс ложные переобучения и задержка](../results/figures/exp3_tradeoff.png)
+![False retrains vs delay](../results/figures/exp3_tradeoff.png)
 
-Для каждого правила уровень α перебирается от 1e-4 до 0.2, и получается кривая
-«ложные переобучения ↔ задержка». Ниже и левее — лучше. Ключевой результат: при
-одинаковом числе ложных переобучений кривая «без поправки» (фиксированный порог на
-поток, опущенный до нужного уровня) лежит не выше LORD++ и BH в окне, а при K = 500
-ниже. Например, при K = 500 порог без поправки с α = 1e-4 и Бонферрони с α = 0.05
-(по сути одно и то же правило, α/K на поток) дают 0.00085 ложных переобучения на 1000
-шагов при 265 шагах задержки. LORD++ с тем же числом ложных переобучений даёт
-324 шага. При K = 100 картина та же: BH в окне с α = 0.05 и порог без поправки с
-α = 0.001 дают одинаковые 0.0064 ложных переобучения на 1000 шагов, но 212 и 201
-шаг задержки соответственно.
+For every rule the level α ranges from 1e-4 to 0.2, giving a "false retrains ↔ delay" curve.
+Lower and further left is better. The key result: at an equal number of false retrains the
+"uncorrected" curve (a fixed per-stream threshold lowered to the required level) lies no higher
+than LORD++ and BH within a window, and lower at K = 500. For example, at K = 500 the uncorrected
+threshold with α = 1e-4 and Bonferroni with α = 0.05 (essentially the same rule, α/K per stream)
+give 0.00085 false retrains per 1000 steps at a delay of 265 steps. LORD++ with the same number of
+false retrains gives 324 steps. At K = 100 the picture is the same: BH within a window with
+α = 0.05 and the uncorrected threshold with α = 0.001 give the same 0.0064 false retrains per 1000
+steps, but a delay of 212 and 201 steps respectively.
 
-Интерпретация: в этом сценарии дрейфы редки и разнесены во времени, в каждом окне
-обычно не больше одного, и адаптивности FDR не к чему подстраиваться. Выигрыш
-относительно текущей практики даёт то, что калибровка вообще позволяет выставить
-уровень на поток, и этот уровень масштабируется с K. Онлайн-процедуры с убывающими
-уровнями (LORD++, LOND) тратят бюджет ошибки неравномерно во времени, что для
-бесконечного мониторинга невыгодно.
+Interpretation: in this scenario drifts are rare and spread out in time, a window usually holds at
+most one, and the adaptivity of FDR has nothing to adapt to. The gain over current practice comes
+from calibration making it possible to set a per-stream level at all, and that level scales with
+K. Online procedures with decreasing levels (LORD++, LOND) spend the error budget unevenly over
+time, which is a poor fit for open-ended monitoring.
 
-## Что показал этап 1
+## What stage 1 showed
 
-1. **Бинарного сигнала недостаточно, нужен скор.** p-значение из чёрного ящика с одним
-   порогом принимает два значения, и онлайн-FDR при сотнях потоков его никогда не
-   отвергнет. Решение — скор «минимальной чувствительности»; для PH и DDM он
-   совпадает с river точно.
-2. **Свидетельство должно копиться.** Если каждое окно тестировать отдельно, LORD++,
-   SAFFRON и LOND почти ничего не находят: их уровни падают с числом проверок быстрее,
-   чем растёт свидетельство. Горизонт в несколько окон решает проблему, а
-   каузальность скоров позволяет калибровать все длины горизонта одним бутстрепом.
-3. **Узкое место калибровки — глубокий хвост.** При экспоненциальном хвосте ошибка
-   его масштаба в 10% даёт ошибку p-значения в 2–6 раз на уровнях около 1e-5, а
-   оценка по опорному отрезку из 300 точек шумит сильнее. Это согласуется с эффектом,
-   описанным Wu & Apley; здесь нужна поправка на изменчивость оценки нуля.
-4. **Зависимость между потоками — не деталь.** Общий фактор даёт пачки ложных тревог
-   и ломает процедуры, опирающиеся на независимость.
-5. **Двусторонняя гипотеза пока склоняется ко второму исходу.** В однородном
-   сценарии с редкими дрейфами FDR-надстройка не лучше правильно масштабированного
-   порога на поток. Где она может окупиться — открытый вопрос для этапа 2.
+1. **A binary signal is not enough; a score is needed.** A p-value from a black box with one
+   threshold takes two values, and online FDR over hundreds of streams will never reject it. The
+   solution is the "least sensitivity" score; for PH and DDM it matches river exactly.
+2. **Evidence must accumulate.** If each window is tested on its own, LORD++, SAFFRON and LOND
+   find almost nothing: their levels fall with the number of tests faster than evidence grows. A
+   horizon of several windows solves this, and causal scores make it possible to calibrate every
+   horizon length with one bootstrap.
+3. **The bottleneck of calibration is the deep tail.** With an exponential tail, a 10% error in
+   its scale gives a 2–6-fold error in the p-value at levels around 1e-5, and the estimate from a
+   300-point reference is noisier than that. This agrees with the effect described by Wu & Apley;
+   a correction for the variability of the null estimate is needed. *(Later done: `sieve_pu`,
+   exp. 6; a GPD tail and B = 2000, exp. 10.)*
+4. **Dependence between streams is not a detail.** A common factor produces bursts of false
+   alarms and breaks procedures that rely on independence.
+5. **The two-sided hypothesis leans towards the second outcome so far.** In a homogeneous
+   scenario with rare drifts the FDR layer is no better than a properly scaled per-stream
+   threshold. Where it could pay off is an open question for stage 2. *(Later refined: BH within a
+   window wins with clustered drifts, exp. 4; online FDR loses everywhere, exp. 12, 21; the
+   correction for the number of models itself pays off in every benchmark scenario, exp. 21.)*
 
-## Этап 2: когда поправка окупается, реальные данные, нулевая гипотеза
+## Stage 2: when the correction pays off, real data, the null hypothesis
 
-Этап 2 по заявке — сама FDR-надстройка, зависимость между потоками, политика
-переобучения и граница Парето. После MVP главный открытый вопрос: где адаптивность
-FDR вообще может выиграть у порога на поток, масштабированного под K. Под него
-добавлены:
+Stage 2 of the proposal is the FDR layer itself, dependence between streams, the retraining
+policy and the Pareto frontier. After the MVP the main open question was where the adaptivity of
+FDR can beat a per-stream threshold scaled to K at all. For it the following were added:
 
-- **Сценарии с кластерными дрейфами** (`drift_events`, `event_fraction` в
-  `ScenarioConfig`): одно событие сдвигает сразу группу потоков, как при смене
-  источника данных для многих моделей.
-- **BatchBH** (Zrnic et al., 2020): BH внутри окна на уровнях, которые контролируют
-  FDR по всем окнам сразу.
-- **BH Стори в окне** (Storey, Taylor & Siegmund, 2004): BH на уровне α/π̂₀, сам
-  поднимает порог, когда дрейфует много потоков одновременно.
-- **Метрика `window_fdp`** — доля ложных среди тревог в окне, усреднённая по окнам.
-  Её контролируют BH в окне и BH Стори. Общая доля ложных за весь прогон (`fdp`) у
-  них выше α: в симуляции с независимыми p-значениями и α = 0.1 это 0.14–0.17 при
-  0.09–0.11 внутри окна. Какую из двух ошибок контролировать в мониторинге, нужно
-  выбрать явно, и это отдельный пункт для статьи.
+- **Scenarios with clustered drifts** (`drift_events`, `event_fraction` in `ScenarioConfig`): one
+  event shifts a group of streams at once, as when the data source of many models changes.
+- **BatchBH** (Zrnic et al., 2020): BH within a window at levels that control FDR across all
+  windows.
+- **Storey's BH within a window** (Storey, Taylor & Siegmund, 2004): BH at level α/π̂₀, which
+  raises the threshold by itself when many streams drift at once.
+- **The `window_fdp` metric** — the share of false alarms among the alarms in a window, averaged
+  over windows. BH and Storey's BH within a window control it. Their share of false alarms over
+  the whole run (`fdp`) is above α: in a simulation with independent p-values and α = 0.1 it is
+  0.14–0.17 against 0.09–0.11 within a window. Which of the two errors to control in monitoring
+  has to be chosen explicitly, and this is a separate point for the paper.
 
-### Эксперимент 4. Окупается ли адаптивность при кластерных дрейфах
+### Experiment 4. Does adaptivity pay off with clustered drifts
 
-У 20% потоков меняется среднее: либо у каждого в своё время, либо двумя событиями
-по 10% потоков, либо одним событием на 20%. Для каждого правила перебирается уровень
-α от 1e-5 до 0.2. Правила сравниваются по лучшей задержке, которую они достигают,
-не превышая бюджет ложных переобучений. PH, φ = 0.5, ρ = 0.3, 6 сценариев на ячейку.
+In 20% of the streams the mean changes: either each at its own time, or in two events of 10% of
+the streams, or in one event of 20%. For each rule the level α ranges from 1e-5 to 0.2. The rules
+are compared by the best delay they reach without exceeding a budget of false retrains. PH,
+φ = 0.5, ρ = 0.3, 6 scenarios per cell.
 
-![Лучшая задержка при бюджете ложных переобучений](../results/figures/exp4_budget_0.01.png)
+![Best delay within a budget of false retrains](../results/figures/exp4_budget_0.01.png)
 
-- **При кластерных дрейфах BH в окне обгоняет лучший фиксированный порог на поток.**
-  В 7 из 8 ячеек (K × сценарий × бюджет) задержка меньше на 16–22%, в одной — на 6%.
-  При K = 500 и одном событии это 172 шага против 206 при бюджете 0.01 ложного
-  переобучения на 1000 шагов и 216 против 271 при бюджете 0.001. Когда в окне
-  дрейфует сразу много потоков, BH поднимает порог и ловит их раньше.
-- **При разрозненных дрейфах выигрыша нет,** как и в эксперименте 3: 219 против
-  199 при K = 500.
-- **BatchBH почти везде медленнее всех, LORD++ обычно медленнее фиксированного
-  порога.** Их уровни убывают с числом окон: бюджет ошибки растягивается на всю
-  бесконечную историю мониторинга.
-- **BH Стори в окне, как правило, хуже обычного BH.** Оценка доли нулевых гипотез по
-  одному окну слишком шумная. Общая доля ложных за прогон у него 0.28–0.40 при
-  α = 0.05, хотя внутри окна 0.03.
+- **With clustered drifts BH within a window beats the best fixed per-stream threshold.** In 7 of
+  8 cells (K × scenario × budget) the delay is 16–22% smaller, in one 6%. At K = 500 and one event
+  this is 172 steps against 206 with a budget of 0.01 false retrains per 1000 steps, and 216
+  against 271 with a budget of 0.001. When many streams drift in the same window, BH raises the
+  threshold and catches them earlier.
+- **With scattered drifts there is no gain,** as in experiment 3: 219 against 199 at K = 500.
+- **BatchBH is the slowest almost everywhere, LORD++ is usually slower than the fixed
+  threshold.** Their levels decrease with the number of windows: the error budget is stretched
+  over the whole open-ended history of monitoring.
+- **Storey's BH within a window is usually worse than plain BH.** The estimate of the share of
+  nulls from one window is too noisy. Its share of false alarms over the run is 0.28–0.40 at
+  α = 0.05, although 0.03 within a window.
 
-Это первое подтверждение прикладной гипотезы в её сильной форме: область, где
-FDR-подход доминирует, существует, и она определяется не числом потоков, а тем,
-приходят ли дрейфы кластерами. Оговорки: сетка α грубая (7 значений), 6 сценариев на
-ячейку, при бюджете 0.001 и K = 100 разброс между сценариями большой. Кривые
-целиком — `results/figures/exp4_clustered_curves.png`, таблицы — `results/exp4_tables.md`.
+This is the first confirmation of the applied hypothesis in its strong form: a region where the
+FDR approach dominates exists, and it is defined not by the number of streams but by whether
+drifts come in clusters. Caveats: the α grid is coarse (7 values), 6 scenarios per cell, and with
+a budget of 0.001 at K = 100 the spread between scenarios is large. Full curves:
+`results/figures/exp4_clustered_curves.png`, tables: `results/exp4_tables.md`.
 
-### Эксперимент 5. Сколько даёт учёт зависимости между потоками
+### Experiment 5. How much does accounting for dependence between streams give
 
-В заявке ожидалось, что при коррелированных потоках наивные поправки становятся
-чрезмерно консервативными и нужны блочные процедуры для совместного ресемплинга.
-Прежде чем строить такую процедуру, измерен потолок её выигрыша. На потоках без
-дрейфа при корреляции ρ от 0 до 0.9 посчитаны три вещи: вероятность ложной тревоги
-в окне у Бонферрони; оракульный уровень на поток, при котором эта вероятность ровно
-0.05, и соответствующее эффективное число тестов M_eff; кучкование ложных тревог.
-При сильной корреляции все потоки сценария движутся вместе, поэтому эффективная
-выборка — число сценариев (60 при K = 100 и 16 при K = 500). Интервалы получены
-ресемплингом сценариев целиком.
+The proposal expected naive corrections to become overly conservative with correlated streams, so
+that block procedures for joint resampling would be needed. Before building such a procedure, the
+ceiling of its gain was measured. On streams without drift, with correlation ρ from 0 to 0.9,
+three things were computed: the probability of a false alarm in a window under Bonferroni; the
+oracle per-stream level at which that probability is exactly 0.05, and the corresponding effective
+number of tests M_eff; and the clustering of false alarms. Under strong correlation all streams of
+a scenario move together, so the effective sample is the number of scenarios (60 at K = 100 and 16
+at K = 500). Intervals come from resampling whole scenarios.
 
-![Зависимость между потоками](../results/figures/exp5_dependence.png)
+![Dependence between streams](../results/figures/exp5_dependence.png)
 
-- **Ложные тревоги приходят пачками, и это самый надёжный эффект.** Отношение
-  дисперсии числа ложных тревог в окне к среднему — около 1 при независимых потоках,
-  6–29 при ρ = 0.3 и 50–230 при ρ = 0.9. На практике это значит, что в одном окне
-  может разом прийти несколько десятков ложных переобучений.
-- **Даже без корреляции Бонферрони даёт 0.09–0.11 вместо 0.05.** Это не зависимость,
-  а ошибка калибровки глубокого хвоста примерно в 2 раза на уровнях 1e-4…5e-4, та же,
-  что в эксперименте 1.
-- **С ростом корреляции Бонферрони действительно становится консервативнее**, но
-  заметно — только при сильной корреляции. M_eff падает примерно до 0.3–0.5·K при
-  ρ = 0.9. При ρ = 0.3 потолок выигрыша от учёта зависимости — примерно в 1.3–1.7
-  раза по уровню на поток, то есть того же порядка, что и ошибка калибровки хвоста.
-  Интервалы широкие, особенно при K = 500.
+- **False alarms come in bursts, and this is the most robust effect.** The ratio of the variance
+  of the number of false alarms per window to its mean is about 1 for independent streams, 6–29 at
+  ρ = 0.3 and 50–230 at ρ = 0.9. In practice this means that several dozen false retrains can
+  arrive in one window.
+- **Even without correlation Bonferroni gives 0.09–0.11 instead of 0.05.** This is not dependence
+  but the roughly 2-fold calibration error of the deep tail at levels of 1e-4…5e-4, the same as in
+  experiment 1.
+- **As correlation grows Bonferroni does become more conservative,** but noticeably only under
+  strong correlation. M_eff falls to roughly 0.3–0.5·K at ρ = 0.9. At ρ = 0.3 the ceiling of the
+  gain from accounting for dependence is about 1.3–1.7 times in the per-stream level, the same
+  order as the tail calibration error. The intervals are wide, especially at K = 500.
 
-Вывод для плана: совместный бутстреп потоков оправдан, если в реальных данных
-корреляция ошибок моделей сильная. В данных Rombouts & Wilms корреляция спроса между
-районами 77%, но корреляция ошибок моделей может быть ниже, и это нужно измерить.
-При умеренной корреляции сначала стоит чинить калибровку хвоста. Отдельный открытый
-вопрос — как отличить пачку ложных тревог от общего фактора от настоящего
-кластерного дрейфа из эксперимента 4: внешне они выглядят одинаково.
+Conclusion for the plan: joint bootstrap of the streams is justified if the models' errors are
+strongly correlated in real data. In the data of Rombouts & Wilms the correlation of demand
+between districts is 77%, but the correlation of the models' errors may be lower, and it has to
+be measured (done in experiment 20). With moderate correlation the tail calibration should be
+fixed first. A separate open question is how to tell a burst of false alarms caused by a common
+factor from a real clustered drift as in experiment 4: from the outside they look the same
+(answered in experiment 18).
 
-### Эксперимент 6. Можно ли починить глубокий хвост калибровки
+### Experiment 6. Can the deep tail of the calibration be fixed
 
-Гипотеза: p-значения слишком малы на уровнях около α/K, потому что бутстреп считает
-AR-модель, оценённую по 300 точкам опорного отрезка, точной (эффект Wu & Apley).
-Новая схема `sieve_pu` в каждой бутстреп-реплике заново оценивает коэффициенты по
-смоделированному опорному отрезку, так что неопределённость оценки попадает в нулевое
-распределение.
+Hypothesis: the p-values are too small at levels around α/K because the bootstrap treats the AR
+model estimated from the 300 points of the reference as exact (the Wu & Apley effect). The new
+scheme `sieve_pu` re-estimates the coefficients from the simulated reference in every bootstrap
+replicate, so the estimation uncertainty enters the null distribution.
 
-![Калибровка глубокого хвоста](../results/figures/exp6_tail.png)
+![Calibration of the deep tail](../results/figures/exp6_tail.png)
 
-- **Помогает, но только частично.** У Бонферрони при 100 независимых потоках
-  вероятность ложной тревоги в окне для PH снизилась с 0.090 до 0.077, для ADWIN —
-  с 0.25 до 0.18 (цель 0.05, 40 сценариев). У KS не изменилась (0.06).
-- **Мощность почти не страдает:** в пределах 1–4 процентных пунктов.
-- **Остаток ошибки — вероятно, форма хвоста.** Особенно у ADWIN: его статистика —
-  максимум по многим точкам разреза, и её хвост тяжелее экспоненциального, который
-  используется при экстраполяции. Следующие кандидаты: GPD-хвост с оценкой формы по
-  большему числу реплик (B = 2000+) или двойной бутстреп только для хвоста.
+- **It helps, but only partly.** With Bonferroni over 100 independent streams the probability of
+  a false alarm in a window fell from 0.090 to 0.077 for PH and from 0.25 to 0.18 for ADWIN
+  (target 0.05, 40 scenarios). For KS it did not change (0.06).
+- **Power barely suffers:** within 1–4 percentage points.
+- **The remaining error is probably the shape of the tail.** Especially for ADWIN: its statistic
+  is a maximum over many split points, and its tail is heavier than the exponential used for
+  extrapolation. Next candidates: a GPD tail with the shape estimated from more replicates
+  (B = 2000+) or a double bootstrap for the tail only.
 
-`sieve_pu` оставлен как метод по умолчанию для реальных данных (эксперимент 7).
+`sieve_pu` was kept as the default method for real data (experiment 7), and is now the library
+default.
 
-### Эксперимент 7. Реальные данные
+### Experiment 7. Real data
 
-Парк из 50 моделей (логистические регрессии на случайных подмножествах признаков,
-обучены на начальном отрезке) на двух реальных наборах, строки **не перемешиваются**,
-калибровка `sieve_pu`, α = 0.05, 3 повтора с разными моделями (`src/driftfdr/datasets.py`).
+A fleet of 50 models (logistic regressions on random subsets of features, trained on an initial
+segment) on two real data sets, rows **not shuffled**, `sieve_pu` calibration, α = 0.05, 3 repeats
+with different models (`src/driftfdr/datasets.py`).
 
-**INSECTS** (Souza et al., 2020). Документированные дрейфы бьют по всем моделям сразу —
-естественный кластерный случай; ошибки моделей коррелируют на 0.77. В копии river
-перед документированными точками идут длинные блоки одного класса, который модели не
-предсказывают никогда, и ошибка там 100%. Это реальное, но неразмеченное изменение;
-поэтому результаты даны для двух разметок: документированной и расширенной (плюс
-начала таких блоков, найденные по одним меткам).
+**INSECTS** (Souza et al., 2020). The documented drifts hit all models at once — a natural
+clustered case; the models' errors correlate at 0.77. In river's copy, the documented change
+points are preceded by long blocks of a single class that the models never predict, and the error
+there is 100%. This is a real but unlabelled change; so results are given for two labellings: the
+documented one and an extended one (plus the starts of such blocks, found from the labels alone).
 
-![INSECTS: тревоги по окнам](../results/figures/exp7_insects_timeline.png)
+![INSECTS: alarms by window](../results/figures/exp7_insects_timeline.png)
 
-| PH, расширенная разметка | тревог | ложных | FDP | средняя задержка |
+| PH, extended labelling | alarms | false | FDP | mean delay |
 |---|---|---|---|---|
-| пороги river | 911 | 680 | 0.75 | 1620 |
-| без поправки | 165 | 26 | 0.15 | 162 |
-| Бонферрони в окне | 120 | 4 | 0.03 | 218 |
-| BH в окне | 123 | 2.7 | 0.02 | 166 |
+| river thresholds | 911 | 680 | 0.75 | 1620 |
+| uncorrected | 165 | 26 | 0.15 | 162 |
+| Bonferroni within a window | 120 | 4 | 0.03 | 218 |
+| BH within a window | 123 | 2.7 | 0.02 | 166 |
 | LORD++ | 117 | 1.3 | 0.01 | 244 |
 
-- **На реальных данных метод работает.** Калиброванные p-значения плюс поправка
-  снижают долю ложных тревог с 75% (river по умолчанию) и 15% (без поправки) до 1–3%.
-  BH в окне при этом быстрее всех: на кластерном событии он за одно окно переобучает
-  все 50 моделей, Бонферрони и LORD++ растягивают это на 2–3 окна (как в эксп. 4).
-- **С документированной разметкой FDP около 0.45 у всех правил:** почти половина
-  тревог попадает в неразмеченные блоки одного класса. Разметка реальных данных
-  определяет выводы не меньше метода.
-- **Пропусков много (MDR ≈ 0.7),** но это в основном изменения, после которых ошибка
-  *падает*: PH и DDM следят только за ростом ошибки и такие изменения сознательно
-  не ловят.
-- На первом стабильном концепте ложных тревог почти нет (FAR 0.0007 при α = 0.05): потеря
-  моделей там слегка снижается, односторонний тест её не замечает.
+- **On real data the method works.** Calibrated p-values plus a correction cut the share of false
+  alarms from 75% (river's defaults) and 15% (uncorrected) to 1–3%. BH within a window is also the
+  fastest: on a clustered event it retrains all 50 models in one window, while Bonferroni and
+  LORD++ stretch this over 2–3 windows (as in exp. 4).
+- **With the documented labelling the FDP is about 0.45 for every rule:** almost half of the alarms
+  fall into the unlabelled single-class blocks. The labelling of real data shapes the conclusions
+  no less than the method does.
+- **There are many misses (MDR ≈ 0.7),** but these are mostly changes after which the error
+  *falls*: PH and DDM watch only for a rise in the error and deliberately ignore such changes.
+- On the first stable concept there are almost no false alarms (FAR 0.0007 at α = 0.05): the
+  models' loss decreases slightly there, and a one-sided test does not react.
 
-**Electricity** (Harries, 1999). Разметки нет, поэтому у 20% моделей после известного
-момента метки перевёрнуты с вероятностью 0.5 (модель полностью теряет концепт) —
-реальный дрейф p(y|X), внедрённый в реальную временную структуру.
+**Electricity** (Harries, 1999). There are no labels, so in 20% of the models the labels are
+flipped with probability 0.5 after a known time (the model loses the concept completely) — a real
+p(y|X) drift injected into a real temporal structure.
 
-- **Здесь метод не работает, и это важный результат.** FDP около 0.97 у всех правил,
-  внедрённый дрейф ловится лишь в половине случаев. Electricity нестационарен сам по
-  себе (сезонность, автокорреляция ошибок 0.84): «стабильные» модели тревожат из-за
-  естественных изменений, и регионная нулевая гипотеза нарушается постоянно.
-- **Длинный опорный отрезок помогает мало:** при 700 и 1400 шагах вместо 300
-  (больше недельного цикла в 336 шагов) ложных тревог у Бонферрони на окно
-  0.37 и 0.32 вместо 0.48, FDP всё равно 0.96.
-- Это второй риск из заявки: на потоках, где распределение плывёт всё время,
-  бинарное «дрейф есть / нет» не работает. Нужна либо модель сезонности в нулевой
-  гипотезе, либо переход к «существенному» дрейфу (изменение ошибки больше порога).
+- **Here the method does not work, and this is an important result.** FDP is about 0.97 for every
+  rule, and the injected drift is caught only in half of the cases. Electricity is non-stationary
+  by itself (seasonality, error autocorrelation 0.84): "stable" models alarm on natural changes,
+  and the regime null is violated all the time.
+- **A long reference helps little:** with 700 and 1400 steps instead of 300 (more than the weekly
+  cycle of 336 steps), Bonferroni's false alarms per window are 0.37 and 0.32 instead of 0.48, and
+  the FDP is still 0.96.
+- This is the second risk from the proposal: on streams where the distribution drifts all the
+  time, a binary "drift / no drift" does not work. Either a model of seasonality in the null or a
+  move to "material" drift (a change in error above a threshold) is needed.
 
-Таблицы — `results/exp7_tables.md`.
+Tables: `results/exp7_tables.md`.
 
-### Эксперимент 8. Нулевая гипотеза «существенного и устойчивого ухудшения»
+### Experiment 8. The null hypothesis of "material and persistent degradation"
 
-Эксперимент 7 показал, что на постоянно меняющихся данных вопрос «есть ли дрейф» теряет
-смысл. Для решения о переобучении важно другое: стала ли модель **существенно** хуже, и
-надолго ли. Отсюда две правки:
+Experiment 7 showed that on constantly changing data the question "is there drift" loses its
+meaning. For a retraining decision something else matters: did the model become **materially**
+worse, and for long. Hence two changes:
 
-- **В тесте** H₀: «ошибка выросла не больше чем на δ». Калибровка сдвигает бутстреп-продолжение
-  на δ вверх (для ошибок 0/1 — переворачивает нужную долю нулей); это наименее благоприятная
-  точка нулевой гипотезы, поэтому p-значение валидно для любого меньшего роста
+- **In the test** H₀: "the error rose by no more than δ". Calibration shifts the bootstrap
+  continuation up by δ (for 0/1 errors, the required share of zeros is flipped); this is the least
+  favourable point of the null, so the p-value is valid for any smaller rise
   (`CalibrationConfig(tolerance=δ)`).
-- **В оценке** истина — сколько модель будет стоить, если её не переобучить: её ошибка на
-  следующих 1000 шагах против ошибки на опорном отрезке (`datasets.error_rate_view`).
-  Кратковременный всплеск, который проходит сам, переобучения не требует и считается нулём.
-  Разметка дрейфов не нужна вовсе.
+- **In the evaluation** the truth is what the model will cost if it is not retrained: its error
+  over the next 1000 steps against its error on the reference (`datasets.error_rate_view`). A
+  short spike that passes by itself does not require a retrain and counts as null. No drift
+  labels are needed at all.
 
-Попутно найдено и исправлено: опорный отрезок из одних ошибок (модель внутри блока одного
-класса) давал вырожденное нулевое распределение и тревоги при *снижении* ошибки. Такие
-потоки теперь считаются непроверяемыми (p = 1).
+Found and fixed along the way: a reference consisting only of errors (a model inside a
+single-class block) gave a degenerate null distribution and alarms when the error *fell*. Such
+streams are now treated as untestable (p = 1).
 
-![Кривая отвержения](../results/figures/exp8_oc.png)
+![Rejection curve](../results/figures/exp8_oc.png)
 
-На синтетике со сдвигами от 0 до 1σ тест с допуском ведёт себя как задумано: сдвиги меньше δ
-почти не дают тревог (0–1.7% при δ = 0.3 против 12–58% у обычного теста), у границы δ — около
-α (0.10 при δ = 0.3, та же лёгкая антиконсервативность хвоста), дальше мощность растёт.
+On synthetic data with shifts from 0 to 1σ the test with a tolerance behaves as intended: shifts
+smaller than δ give almost no alarms (0–1.7% at δ = 0.3 against 12–58% for the ordinary test),
+at the boundary δ about α (0.10 at δ = 0.3, the same slight anti-conservativeness of the tail),
+and beyond it the power grows.
 
-| Реальные данные, 50 моделей, δ = 5 п.п. ошибки | FDP без поправки | FDP Бонферрони | FDP BH в окне |
+| Real data, 50 models, δ = 5 points of error | FDP uncorrected | FDP Bonferroni | FDP BH within a window |
 |---|---|---|---|
-| INSECTS, обычный тест | 0.39 | 0.24 | 0.24 |
-| INSECTS, тест с допуском | **0.013** | **0.007** | **0.007** |
-| Electricity, обычный тест | 0.58 | 0.31 | 0.25 |
-| Electricity, тест с допуском | 0.35 | 0.35 | 0.32 |
+| INSECTS, ordinary test | 0.39 | 0.24 | 0.24 |
+| INSECTS, test with tolerance | **0.013** | **0.007** | **0.007** |
+| Electricity, ordinary test | 0.58 | 0.31 | 0.25 |
+| Electricity, test with tolerance | 0.35 | 0.35 | 0.32 |
 
-- **На INSECTS задача решена:** с допуском ложных переобучений почти нет даже без поправки
-  на множественность — основную работу делает правильная нулевая гипотеза.
-- **На Electricity доля ложных упала с 0.97 (эксперимент 7) до 0.25–0.35.** Остаток — в основном
-  кратковременные всплески ошибки: PH берёт максимум скора внутри окна и реагирует на них.
-  Следующий шаг — статистика, требующая устойчивости (среднее по всему горизонту вместо
-  максимума в окне).
-- Доля отвергнутых ненулевых тестов низкая (`power_per_test` ≈ 0.01–0.1), но это ожидаемо:
-  после первой тревоги модель переобучается, и последующие окна того же ухудшения уже не
-  проверяются против старого уровня.
+- **On INSECTS the problem is solved:** with a tolerance there are almost no false retrains even
+  without a multiplicity correction — the right null hypothesis does the main work.
+- **On Electricity the share of false alarms fell from 0.97 (experiment 7) to 0.25–0.35.** The
+  remainder is mostly short-lived spikes of the error: PH takes the maximum score within a window
+  and reacts to them. The next step is a statistic that requires persistence (the mean over the
+  whole horizon instead of the maximum within a window).
+- The share of rejected non-null tests is low (`power_per_test` ≈ 0.01–0.1), but this is expected:
+  after the first alarm the model is retrained, and later windows of the same degradation are no
+  longer tested against the old level.
 
-Таблицы — `results/exp8_tables.md`.
+Tables: `results/exp8_tables.md`.
 
-### Эксперимент 9. Требование устойчивости
+### Experiment 9. Requiring persistence
 
-Новый детектор `MeanShift(persistence=m)`: статистика — наименьшее превышение средней
-ошибки над опорным уровнем среди последних m окон; пока m окон не прошло, тревога невозможна.
-Однооконный всплеск такую статистику не проходит. Калибровка та же (бутстреп с допуском δ = 5 п.п.),
-50 моделей, 3 парка на датасет.
+A new detector `MeanShift(persistence=m)`: the statistic is the smallest excess of the mean error
+over the reference level among the last m windows; until m windows have passed, no alarm is
+possible. A one-window spike cannot pass such a statistic. The same calibration (bootstrap with
+tolerance δ = 5 points), 50 models, 3 fleets per data set.
 
-| Electricity, FDP | без поправки | Бонферрони | BH в окне |
+| Electricity, FDP | uncorrected | Bonferroni | BH within a window |
 |---|---|---|---|
 | PH | 0.35 | 0.35 | 0.32 |
-| MeanShift(1) — без устойчивости | 0.44 | 0.36 | 0.34 |
+| MeanShift(1) — no persistence | 0.44 | 0.36 | 0.34 |
 | MeanShift(3) | **0.12** | 0.27 | **0.00** |
 | MeanShift(5) | 0.40 | **0.01** | 0.55 |
 
-- **Устойчивость помогает, но результат шумный.** Остаток ложных тревог на Electricity — это
-  эпизоды, когда весь парк ухудшается на несколько недель и потом восстанавливается сам:
-  26–27 ложных тревог разом. Попадёт ли такой эпизод в прогон, зависит от того, когда модели
-  переобучались, поэтому FDP прыгает между 0 и 0.55 для близких настроек. Нужны десятки парков,
-  а не три.
-- **На INSECTS все варианты дают 0–2% ложных;** устойчивость стоит немного мощности
-  (доля отвергнутых ненулевых тестов 0.08 при m = 3 против 0.10 у PH).
-- Эпизоды «весь парк хуже на время» — та же проблема, что и в эксперименте 5: пачку от общего
-  фактора трудно отличить от настоящего кластерного дрейфа. Ответ на неё — вопрос горизонта:
-  что считать «надолго» (здесь 1000 шагов ≈ 3 недели), решает стоимость переобучения.
+- **Persistence helps, but the result is noisy.** The remaining false alarms on Electricity are
+  episodes where the whole fleet gets worse for several weeks and then recovers by itself: 26–27
+  false alarms at once. Whether such an episode falls into a run depends on when the models were
+  retrained, so the FDP jumps between 0 and 0.55 for similar settings. Dozens of fleets are
+  needed, not three.
+- **On INSECTS every variant gives 0–2% false alarms;** persistence costs a little power (the
+  share of rejected non-null tests is 0.08 at m = 3 against 0.10 for PH).
+- Episodes of "the whole fleet is worse for a while" are the same problem as in experiment 5: a
+  burst from a common factor is hard to tell from a real clustered drift. The answer is a matter
+  of horizon: what counts as "for long" (here 1000 steps ≈ 3 weeks) is decided by the cost of a
+  retrain.
 
-Таблицы — `results/exp9_tables.md`.
+Tables: `results/exp9_tables.md`.
 
-### Эксперимент 10. Больше реплик и тяжёлый хвост
+### Experiment 10. More replicates and a heavy tail
 
-Два дополнительных рычага на той же проверке (100 независимых потоков, 30 сценариев,
-`sieve_pu`): B = 2000 бутстреп-реплик вместо 500 и GPD-хвост с оцениваемой формой вместо
-экспоненциального.
+Two more levers on the same check (100 independent streams, 30 scenarios, `sieve_pu`): B = 2000
+bootstrap replicates instead of 500 and a GPD tail with an estimated shape instead of the
+exponential one.
 
-| Бонферрони, P(ложная тревога в окне), цель 0.05 | B = 500, экспонента | B = 500, GPD | B = 2000, GPD |
+| Bonferroni, P(false alarm in a window), target 0.05 | B = 500, exponential | B = 500, GPD | B = 2000, GPD |
 |---|---|---|---|
 | PH | 0.081 | 0.073 | **0.056** ± 0.015 |
 | KS | 0.059 | 0.049 | **0.046** ± 0.015 |
 | ADWIN | 0.177 | 0.148 | 0.147 ± 0.021 |
 
-- **Для PH и KS хвост калибровки починен:** с GPD-хвостом и 2000 репликами ошибка в
-  пределах погрешности от номинала. GPD лучше экспоненты во всех 6 сравнениях.
-- **ADWIN остаётся антиконсервативным примерно втрое.** Его статистика — максимум по многим
-  точкам разреза, и хвост у неё тяжелее, чем умеют экстраполировать эти методы. Для строгого
-  контроля ложных тревог лучше PH, KS или MeanShift.
+- **For PH and KS the tail of the calibration is fixed:** with a GPD tail and 2000 replicates the
+  error is within the error bars of nominal. GPD beats the exponential in all 6 comparisons.
+- **ADWIN stays about three times anti-conservative.** Its statistic is a maximum over many split
+  points, and its tail is heavier than these methods can extrapolate. For strict control of false
+  alarms PH, KS or MeanShift are better.
 
-Таблицы — `results/exp10_tables.md`.
+Tables: `results/exp10_tables.md`.
 
-### Эксперимент 11. Какой детектор какой дрейф видит: p(X) против p(y|X)
+### Experiment 11. Which detector sees which drift: p(X) vs p(y|X)
 
-Сценарий с признаком, меткой и фиксированной линейной моделью (`make_supervised_scenario`).
-Виртуальный дрейф сдвигает распределение признака, но модель остаётся верной; реальный меняет
-наклон, и ошибка растёт; «оба» — одновременно; циклический переключает наклон каждые 1000 шагов.
-300 моделей × 3 повтора, калибровка, Бонферрони в окне, α = 0.05. В таблице — доля моделей,
-получивших хотя бы одну тревогу после начала дрейфа.
+A scenario with a feature, a label and a fixed linear model (`make_supervised_scenario`). Virtual
+drift shifts the feature's distribution, but the model stays correct; real drift changes the
+slope, and the error grows; "both" does both at once; cyclic switches the slope every 1000 steps.
+300 models × 3 repeats, calibration, Bonferroni within a window, α = 0.05. The table gives the
+share of models that received at least one alarm after the drift began.
 
-| детектор | без дрейфа | p(X), модель не хуже | p(y\|X) | оба | циклический |
+| detector | no drift | p(X), model not worse | p(y\|X) | both | cyclic |
 |---|---|---|---|---|---|
-| KS на признаке | 1% | **100%** | 0.6% | 100% | 0% |
-| PH на признаке (двусторонний) | 0.6% | **99%** | 0% | 100% | 0% |
-| PH на потере | 2% | 2% | 28% | 72% | 21% |
-| MeanShift(3) на потере | 2% | 0.6% | 20% | 62% | 12% |
-| DDM на ошибках 0/1 | 1% | 0% | 0% | 1% | 0% |
+| KS on the feature | 1% | **100%** | 0.6% | 100% | 0% |
+| PH on the feature (two-sided) | 0.6% | **99%** | 0% | 100% | 0% |
+| PH on the loss | 2% | 2% | 28% | 72% | 21% |
+| MeanShift(3) on the loss | 2% | 0.6% | 20% | 62% | 12% |
+| DDM on 0/1 errors | 1% | 0% | 0% | 1% | 0% |
 
-- **Детекторы на признаках отвечают не на тот вопрос.** Они тревожат на всех моделях с
-  виртуальным дрейфом, то есть дают лишние переобучения, и не видят реального дрейфа совсем.
-  Это количественный ответ на смешение двух видов дрейфа в прикладной литературе.
-- **Детекторы на ошибке модели почти не реагируют на виртуальный дрейф** и ловят реальный.
-  Но при 300 моделях и Бонферрони сдвиг потери на 0.25 (при сильно скошенной квадратичной потере)
-  ловится лишь у 20–28% моделей: для слабого реального дрейфа поправка на множественность
-  дорога.
-- **Циклический дрейф ловится хуже постоянного:** половину времени модель снова права, и
-  свидетельство не успевает накопиться.
-- **DDM на ошибках 0/1 почти ничего не находит** — как и в экспериментах 1 и 2.
+- **Feature detectors answer the wrong question.** They alarm on every model with virtual drift,
+  that is, cause needless retrains, and do not see real drift at all. This is a quantitative
+  answer to the conflation of the two kinds of drift in the applied literature.
+- **Detectors on the model's error barely react to virtual drift** and catch real drift. But with
+  300 models and Bonferroni a loss shift of 0.25 (with a strongly skewed squared loss) is caught
+  in only 20–28% of the models: for weak real drift the multiplicity correction is expensive.
+- **Cyclic drift is caught worse than a persistent one:** half of the time the model is right
+  again, and evidence has no time to accumulate.
+- **DDM on 0/1 errors finds almost nothing** — as in experiments 1 and 2.
 
-Вывод для применения: решение о переобучении стоит строить на ошибке модели, а детекторы на
-признаках использовать как диагностику («что изменилось»), а не как триггер.
+Conclusion for practice: retraining decisions should be based on the model's error, and feature
+detectors used as diagnostics ("what changed"), not as a trigger.
 
-Таблицы — `results/exp11_tables.md`.
+Tables: `results/exp11_tables.md`.
 
-### Эксперимент 12. Граница компромисса по типу и силе дрейфа
+### Experiment 12. The trade-off frontier by type and size of drift
 
-Как эксперимент 3, но отдельно для резкого и постепенного (рампа 500 шагов) дрейфа на 0.5σ и
-1σ; K = 100, 10% моделей с разрозненными дрейфами, ρ = 0.3, 6 сценариев. Лучшая задержка
-(шагов на старой модели) в пределах бюджета ложных переобучений на 1000 шагов:
+As experiment 3, but separately for abrupt and gradual (a 500-step ramp) drift of 0.5σ and 1σ;
+K = 100, 10% of the models with scattered drifts, ρ = 0.3, 6 scenarios. The best delay (steps on a
+stale model) within a budget of false retrains per 1000 steps:
 
-| дрейф | бюджет | без поправки / Бонферрони | BH в окне | LORD++ |
+| drift | budget | uncorrected / Bonferroni | BH within a window | LORD++ |
 |---|---|---|---|---|
-| резкий, 0.5σ | 0.001 | **1300** | 1710 | 1940 |
-| резкий, 0.5σ | 0.01 | **741** | 1190 | 1940 |
-| резкий, 1σ | 0.001 | **252** | 339 | 478 |
-| резкий, 1σ | 0.01 | **201** | 212 | 332 |
-| постепенный, 0.5σ | 0.001 | 1510 | **1460** | 1970 |
-| постепенный, 0.5σ | 0.01 | **1100** | 1460 | 1970 |
-| постепенный, 1σ | 0.001 | **556** | 692 | 656 |
-| постепенный, 1σ | 0.01 | **441** | 462 | 612 |
+| abrupt, 0.5σ | 0.001 | **1300** | 1710 | 1940 |
+| abrupt, 0.5σ | 0.01 | **741** | 1190 | 1940 |
+| abrupt, 1σ | 0.001 | **252** | 339 | 478 |
+| abrupt, 1σ | 0.01 | **201** | 212 | 332 |
+| gradual, 0.5σ | 0.001 | 1510 | **1460** | 1970 |
+| gradual, 0.5σ | 0.01 | **1100** | 1460 | 1970 |
+| gradual, 1σ | 0.001 | **556** | 692 | 656 |
+| gradual, 1σ | 0.01 | **441** | 462 | 612 |
 
-- **Вывод эксперимента 3 держится для всех типов и сил дрейфа:** при разрозненных дрейфах
-  лучший фиксированный порог на поток не хуже BH и всегда лучше LORD++ (при равном бюджете
-  «без поправки» и «Бонферрони» — одно и то же правило α/K). Единственное исключение
-  (постепенный 0.5σ, бюджет 0.001) — в пределах шума.
-- **Слабый дрейф ловится в разы медленнее:** 740–2000 шагов при 0.5σ против 200–550 при 1σ;
-  постепенный — медленнее резкого.
-- **MTR (Bifet et al., 2013) здесь малоинформативен:** у правил с поправкой в части прогонов
-  нет ни одной ложной тревоги, MTFA и MTR бесконечны. Для сравнения правил полезнее кривые
-  компромисса.
+- **The conclusion of experiment 3 holds for every type and size of drift:** with scattered drifts
+  the best fixed per-stream threshold is no worse than BH and always better than LORD++ (at an
+  equal budget "uncorrected" and "Bonferroni" are the same rule α/K). The only exception (gradual
+  0.5σ, budget 0.001) is within noise.
+- **Weak drift is caught several times more slowly:** 740–2000 steps at 0.5σ against 200–550 at
+  1σ; gradual drift is slower than abrupt.
+- **MTR (Bifet et al., 2013) is not very informative here:** rules with a correction have no false
+  alarm at all in some runs, so MTFA and MTR are infinite. Trade-off curves are more useful for
+  comparing rules.
 
-Таблицы — `results/exp12_tables.md`.
+Tables: `results/exp12_tables.md`.
 
-### Эксперимент 13. e-BH: контроль FDR при любой зависимости
+### Experiment 13. e-BH: FDR control under any dependence
 
-e-BH (Wang & Ramdas, 2022) контролирует FDR при любой зависимости между моделями; p-значения
-переводятся в e-значения калибратором e = 0.5 / √p. K = 200, 10% моделей с дрейфом, 10 сценариев,
+e-BH (Wang & Ramdas, 2022) controls FDR under any dependence between models; p-values are turned
+into e-values with the calibrator e = 0.5 / √p. K = 200, 10% of the models drift, 10 scenarios,
 α = 0.05.
 
-| ρ | Бонферрони: FDR / задержка | BH в окне: FDR / задержка | e-BH: FDR / задержка / пропуски |
+| ρ | Bonferroni: FDR / delay | BH within a window: FDR / delay | e-BH: FDR / delay / misses |
 |---|---|---|---|
 | 0 | 0.03 / 237 | 0.07 / 221 | 0 / 1310 / 37% |
 | 0.3 | 0.05 / 228 | 0.11 / 213 | 0 / 1210 / 34% |
 | 0.6 | 0.05 / 223 | **0.17** / 217 | 0 / 1040 / 26% |
 
-- **e-BH слишком осторожен для мониторинга:** ни одной ложной тревоги, но треть дрейфов
-  пропущена, а задержка впятеро больше. Цена гарантии «при любой зависимости» здесь не окупается.
-- **BH в окне теряет контроль общей доли ложных с ростом корреляции** (0.07 → 0.17), хотя внутри
-  окна он держит свои 0.02 — те самые пачки из эксперимента 5.
-- **Бонферрони в окне остаётся около 0.05 при любой корреляции** и почти той же задержке, что BH.
-  Для коррелированных моделей это самый надёжный практический выбор; BH стоит брать, когда
-  ожидаются кластерные дрейфы (эксперимент 4), а корреляция ошибок умеренная.
+- **e-BH is too cautious for monitoring:** not a single false alarm, but a third of the drifts
+  missed and five times the delay. The price of a guarantee "under any dependence" does not pay
+  off here.
+- **BH within a window loses control of the overall share of false alarms as correlation grows**
+  (0.07 → 0.17), although within a window it keeps its 0.02 — the very bursts of experiment 5.
+- **Bonferroni within a window stays around 0.05 under any correlation** and at almost the same
+  delay as BH. For correlated models it is the most reliable practical choice; BH is worth taking
+  when clustered drifts are expected (experiment 4) and the correlation of errors is moderate.
 
-Таблицы — `results/exp13_tables.md`.
+Tables: `results/exp13_tables.md`.
 
-### Эксперимент 14. Четыре реальных набора
+### Experiment 14. Four real data sets
 
-INSECTS, Electricity (только естественные изменения, без внедрённого дрейфа), Airlines и
-Covertype (первые 100 тыс. строк каждого, исходный порядок), по 50 моделей, 2 парка. Истина —
-существенное ухудшение: ошибка на следующих 1000 шагах выше опорной больше чем на 5 п.п.
-«river» — Page-Hinkley с порогом по умолчанию на ряде ошибок 0/1. Доля ложных среди тревог:
+INSECTS and Electricity (natural changes only, no injected drift) in full, the first 100 thousand
+rows of Airlines and Covertype; rows in their original order, 50 models each, 2 fleets. The truth
+is material degradation: the error over the next 1000 steps exceeds the reference error by more
+than 5 points. "river" is Page-Hinkley at its default threshold on the 0/1 error series. The share
+of false alarms among alarms:
 
-| набор | river | PH, без поправки | PH, Бонферрони | MeanShift(3), без поправки | MeanShift(3), Бонферрони | MeanShift(3), BH |
+| data | river | PH, uncorrected | PH, Bonferroni | MeanShift(3), uncorrected | MeanShift(3), Bonferroni | MeanShift(3), BH |
 |---|---|---|---|---|---|---|
 | INSECTS | 0.50 | 0.01 | **0** | 0.01 | **0** | **0** |
 | Electricity | 0.56 | 0.34 | 0.30 | 0.08 | 0.27 | **0** |
 | Covertype | 0.75 | 0.50 | 0.29 | 0.24 | **0.15** | 0.21 |
 | Airlines | **0.26** | 0.37 | 0.33 | 0.35 | 0.35 | 0.32 |
 
-- **На трёх наборах из четырёх калибровка с нулевой гипотезой существенного ухудшения
-  сильно снижает долю ложных переобучений:** INSECTS 50% → 0%, Electricity 56% → 0–8%,
-  Covertype 75% → 15%. Лучшая комбинация почти везде — устойчивый MeanShift(3).
-- **На Airlines метод не помогает.** 1000 строк там меньше суток полётов, а доля задержек
-  сильно зависит от времени суток; «будущая ошибка на 1000 шагов» колеблется внутри дня, и
-  нулевая гипотеза на таком горизонте задана неудачно. Для таких данных горизонт и опорный
-  отрезок нужно мерить в сутках, а не в строках.
-- Порог river на Airlines тревожит редко и потому выглядит лучше, но это случайность настройки,
-  а не контроль ошибки.
+- **On three data sets out of four, calibration with the material-degradation null sharply cuts
+  the share of false retrains:** INSECTS 50% → 0%, Electricity 56% → 0–8%, Covertype 75% → 15%.
+  The best combination almost everywhere is the persistent MeanShift(3).
+- **On Airlines the method does not help.** 1000 rows there are about an hour and a half of
+  flights, and the share of delays depends strongly on the time of day; "the future error over
+  1000 steps" oscillates within a day, and the null on such a horizon is poorly posed. For such
+  data the horizon and the reference should be measured in days, not rows (experiment 16).
+- river's threshold on Airlines alarms rarely and therefore looks better, but this is an accident
+  of tuning, not control of the error.
 
-Таблицы — `results/exp14_tables.md`.
+Tables: `results/exp14_tables.md`.
 
-### Эксперимент 15. Бенчмарк всех детекторов при едином FAR
+### Experiment 15. A benchmark of all detectors at a single FAR
 
-Как вторая часть эксперимента 1, но со всеми детекторами пакета и калибровкой этапа 2
-(`sieve_pu`, для ошибок 0/1 — блочный бутстреп). У половины из 1000 потоков (φ = 0.5) в известный
-момент среднее сдвигается; каждый детектор калиброван на номинальный FAR 0.05.
+Like the second part of experiment 1, but with every detector of the package and the stage 2
+calibration (`sieve_pu`, block bootstrap for 0/1 errors). In half of 1000 streams (φ = 0.5) the
+mean shifts at a known time; every detector is calibrated to a nominal FAR of 0.05.
 
-| детектор | фактический FAR | 0.5σ: 1-е окно | 0.5σ: 3-е окно | 1σ: 1-е окно |
+| detector | actual FAR | 0.5σ: 1st window | 0.5σ: 3rd window | 1σ: 1st window |
 |---|---|---|---|---|
 | MeanShift(1) | 0.062 | **0.82** | 0.81 | **1.00** |
 | KS-sliding | 0.064 | 0.49 | 0.72 | 0.99 |
@@ -491,392 +488,421 @@ Covertype (первые 100 тыс. строк каждого, исходный 
 | KS | 0.059 | 0.12 | 0.59 | 0.28 |
 | DDM | 0.065 | 0.09 | 0.31 | 0.24 |
 
-- **Для сдвига среднего ошибки самый мощный детектор — простейший MeanShift(1),** сравнение
-  средней в окне с опорной: 0.82 уже в первом окне при 0.5σ против 0.31 у PH и 0.52 у ADWIN.
-  Популярные детекторы проигрывают ему при честном сравнении на одном уровне ложных тревог.
-- **MeanShift(3) — самый консервативный (FAR 0.044) и самый мощный к третьему окну** (0.93), но по
-  построению не может сработать раньше: это плата за устойчивость, которая окупилась на реальных
-  данных (эксперимент 14).
-- **Скользящий KS заметно лучше пакетного** в первом окне (0.49 против 0.12), но не догоняет
-  MeanShift, потому что KS ловит любое изменение распределения, а не именно рост среднего.
-- **DDM — самый слабый при любом сдвиге,** как и в экспериментах 1, 2 и 11.
-- ADWIN мощный, но его FAR 0.073 выше номинала — та же проблема хвоста, что в эксперименте 10.
+- **For a shift in the mean error the most powerful detector is the simplest, MeanShift(1),**
+  comparing the window mean with the reference: 0.82 already in the first window at 0.5σ against
+  0.31 for PH and 0.52 for ADWIN. Popular detectors lose to it in a fair comparison at one
+  false-alarm rate.
+- **MeanShift(3) is the most conservative (FAR 0.044) and the most powerful by the third window**
+  (0.93), but by construction it cannot fire earlier: the price of persistence, which paid off on
+  real data (experiment 14).
+- **Sliding KS is clearly better than batch KS** in the first window (0.49 against 0.12), but does
+  not catch up with MeanShift, because KS reacts to any change in the distribution, not
+  specifically to a rise in the mean.
+- **DDM is the weakest at any shift,** as in experiments 1, 2 and 11.
+- ADWIN is powerful, but its FAR of 0.073 is above nominal — the same tail problem as in
+  experiment 10.
 
-Таблицы — `results/exp15_tables.md`.
+Tables: `results/exp15_tables.md`.
 
-### Эксперимент 16. Время в часах, а не в строках
+### Experiment 16. Time in hours, not rows
 
-В эксперименте 14 метод не помог на Airlines: 1000 строк — это полтора часа полётов, а доля
-задержек зависит от времени суток (0.26 утром, 0.53 вечером). Здесь ошибки каждой модели
-усреднены по часам (`bucket_means`) за все 31 день; опорный отрезок — неделя (168 часов), окно —
-сутки (24 часа), истина — ошибка на следующей неделе, δ = 5 п.п.; 50 моделей, 3 парка.
+In experiment 14 the method did not help on Airlines: 1000 rows are an hour and a half of flights,
+and the share of delays depends on the time of day (0.26 in the morning, 0.53 in the evening).
+Here each model's errors are averaged per hour (`bucket_means`) over all 31 days; the reference is
+a week (168 hours), the window a day (24 hours), the truth the error over the next week,
+δ = 5 points; 50 models, 3 fleets.
 
-| детектор | без поправки | Бонферрони | BH в окне |
+| detector | uncorrected | Bonferroni | BH within a window |
 |---|---|---|---|
 | PH | 0.15 | 0 | 0 |
 | MeanShift(1) | **0** | **0** | **0** |
 | MeanShift(2) | 0.06 | 0 | 0.04 |
 
-- **Доля ложных переобучений упала с 0.31–0.37 (построчно) до 0–0.06.** Когда окно покрывает целый
-  суточный цикл, цикл сокращается сам, и остаются только настоящие изменения.
-- Практическое правило: опорный отрезок и окно нужно задавать в единицах времени, кратных
-  естественному циклу данных (сутки, неделя), а не в числе наблюдений. `bucket_means` заодно
-  решает проблему нерегулярных потоков: сколько бы событий ни пришло за час, это одна точка.
-- Допуск δ можно выбирать из стоимости переобучения: `tolerance_from_cost(cost, horizon)` = цена
-  переобучения / число шагов до следующего планового переобучения (переобучать выгодно, если
-  рост ошибки δ за этот срок стоит больше самого переобучения).
+- **The share of false retrains fell from 0.31–0.37 (per row) to 0–0.06.** When a window covers a
+  whole daily cycle, the cycle cancels out, and only real changes remain.
+- Rule of thumb: the reference and the window should be set in units of time that are multiples of
+  the data's natural cycle (day, week), not in numbers of observations. `bucket_means` also solves
+  the problem of irregular streams: however many events arrive in an hour, it is one point.
+- The tolerance δ can be chosen from the cost of a retrain: `tolerance_from_cost(cost, horizon)` =
+  the cost of a retrain / the number of steps until the next scheduled retrain (retraining pays
+  off if a rise of δ in the error over that period costs more than the retrain itself).
 
-Таблицы — `results/exp16_tables.md`.
-### Эксперимент 17. Сравнение с Evidently и NannyML
+Tables: `results/exp16_tables.md`.
 
-Все инструменты смотрят на один и тот же ряд ошибок 0/1 каждой модели, против одного и того же
-статического опорного отрезка (первые 1000 шагов после обучения, без переобучения), окнами по 100
-шагов, и оцениваются одной истиной — существенным ухудшением (δ = 5 п.п.). 20 моделей, 2 парка.
+### Experiment 17. Comparison with Evidently and NannyML
 
-- **Evidently 0.7**, `ValueDrift` на колонке ошибок: для бинарной колонки по умолчанию — Z-тест двух
-  долей, дрейф при p < 0.05. Тест воспроизведён в коде (один отчёт Evidently на окно занял бы часы)
-  и сверен с настоящим Evidently на 300 случайных случаях: расхождение p-значений не больше 1e-16.
-- **NannyML 0.13**, `PerformanceCalculator` по точности, чанк = окно, пороги по умолчанию
-  (среднее ± 3σ точности по чанкам опорного отрезка); тревога — выход ниже нижнего порога.
-- **driftfdr**: MeanShift(1) с калиброванными p-значениями, с допуском δ и без, для каждой модели
-  (α = 0.05) и с Бонферрони по моделям.
+All tools look at the same 0/1 error series of each model, against the same static reference
+(the first 1000 steps after training, no retraining), in windows of 100 steps, and are judged by
+the same truth — material degradation (δ = 5 points). 20 models, 2 fleets.
 
-| набор | метод | FAR | мощность | FDP |
+- **Evidently 0.7**, `ValueDrift` on the error column: for a binary column the default is a
+  two-proportion Z-test, drift at p < 0.05. The test is reimplemented in code (an Evidently report
+  for every window of every model takes about 36 ms, tens of minutes per run) and checked against
+  the real Evidently on 300 random cases: p-values differ by at most 1e-16.
+- **NannyML 0.13**, `PerformanceCalculator` on accuracy, chunk = window, default thresholds (mean ±
+  3σ of the accuracy over the reference chunks); an alarm is a drop below the lower threshold.
+- **driftfdr**: MeanShift(1) with calibrated p-values, with and without a tolerance δ, for each
+  model (α = 0.05) and with Bonferroni across models.
+
+| data | method | FAR | power | FDP |
 |---|---|---|---|---|
 | Electricity | Evidently | 0.51 | 0.71 | 0.28 |
 | Electricity | NannyML | 0.014 | 0.11 | 0.06 |
-| Electricity | driftfdr, δ = 0.05, Бонферрони | 0.016 | 0.13 | 0.06 |
+| Electricity | driftfdr, δ = 0.05, Bonferroni | 0.016 | 0.13 | 0.06 |
 | INSECTS | Evidently | 0.20 | 0.89 | 0.07 |
 | INSECTS | NannyML | 0.031 | 0.81 | 0.013 |
-| INSECTS | driftfdr, δ = 0.05, без поправки | 0.021 | 0.78 | 0.010 |
+| INSECTS | driftfdr, δ = 0.05, uncorrected | 0.021 | 0.78 | 0.010 |
 | Airlines | Evidently | 0.54 | 0.64 | 0.82 |
 | Airlines | NannyML | 0.006 | 0.38 | 0.08 |
-| Airlines | driftfdr, δ = 0, Бонферрони | 0.006 | 0.37 | 0.08 |
+| Airlines | driftfdr, δ = 0, Bonferroni | 0.006 | 0.37 | 0.08 |
 | Covertype | Evidently | 0.78 | 0.77 | 0.87 |
 | Covertype | NannyML | 0.004 | 0.05 | 0.47 |
-| Covertype | driftfdr, δ = 0.05, Бонферрони | 0.028 | 0.34 | 0.36 |
+| Covertype | driftfdr, δ = 0.05, Bonferroni | 0.028 | 0.34 | 0.36 |
 
-FAR — доля тревог в окнах без существенного ухудшения, мощность — в окнах с ним.
+FAR is the share of alarms in windows without material degradation, power the share in windows
+with it.
 
-- **Стандартный тест дрейфа Evidently на ряде ошибок почти бесполезен как триггер переобучения:**
-  тревоги в 20–78% окон, где модель не ухудшилась. Тест предполагает независимые наблюдения,
-  ловит любое изменение (в том числе улучшение) и не знает о допуске.
-- **NannyML и driftfdr при сопоставимом уровне ложных тревог ловят ухудшения примерно одинаково.**
-  Мониторинг качества в NannyML тоже калибрует порог по разбросу опорных данных, и это работает.
-- **Разница в управляемости, а не в мощности.** В driftfdr уровень ложных тревог задаётся явно
-  (α), учитывает число моделей и допуск δ; у NannyML порог ±3σ фиксирован и не зависит от размера
-  парка — на Covertype он почти ничего не ловит (мощность 0.05), а на INSECTS допускает больше
-  ложных. Выбрать точку компромисса под цену переобучения можно только в driftfdr.
+- **Evidently's standard drift test on the error series is nearly useless as a retraining
+  trigger:** alarms in 20–78% of the windows where the model did not get worse. The test assumes
+  independent observations, reacts to any change (including an improvement) and knows nothing about
+  a tolerance.
+- **NannyML and driftfdr catch degradations about equally well at a comparable false-alarm
+  rate.** NannyML's performance monitoring also calibrates its threshold on the spread of the
+  reference data, and this works.
+- **The difference is in control, not in power.** In driftfdr the false-alarm rate is set
+  explicitly (α) and accounts for the number of models and the tolerance δ; NannyML's ±3σ
+  threshold is fixed and does not depend on the fleet size — on Covertype it catches almost
+  nothing (power 0.05), and on INSECTS it allows more false alarms. Only driftfdr lets you choose
+  the trade-off point for the cost of a retrain.
 
-Таблицы — `results/exp17_tables.md`. Запуск требует `pip install evidently nannyml`.
+Tables: `results/exp17_tables.md`. Running it requires `pip install evidently nannyml`.
 
-### Эксперимент 18. Пачки ложных тревог против массового дрейфа
+### Experiment 18. Bursts of false alarms vs fleet-wide drift
 
-Когда у моделей общий фактор (общий поток данных, общий источник признаков), многие из них
-выглядят хуже одновременно и без всякого дрейфа (эксп. 5), как и после настоящего массового
-дрейфа (эксп. 4). `split_common` стандартизует ряды по опорному отрезку и вычитает медиану по
-моделям в каждый момент: остатки проверяются по моделям как обычно, а общий компонент — как ещё
-один поток в той же процедуре; его тревога означает событие во всём парке. K = 200 потоков AR(1)
-(φ = 0.5), корреляция через общий фактор ρ ∈ {0.3, 0.6}, Page-Hinkley, α = 0.05, 10 прогонов.
-Сценарии: без дрейфа; дрейф у 20% моделей одновременно; дрейф у всех моделей.
+When models share a common factor (a common data stream, a common source of features), many of
+them look worse at once even without any drift (exp. 5), as they do after a real fleet-wide drift
+(exp. 4). `split_common` standardises the series by the reference and subtracts the
+cross-sectional median at every step: the residuals are tested per model as usual, and the common
+component as one more stream in the same procedure; its alarm means an event across the whole
+fleet. K = 200 AR(1) streams (φ = 0.5), correlation through a common factor ρ ∈ {0.3, 0.6},
+Page-Hinkley, α = 0.05, 10 runs. Scenarios: no drift; a drift in 20% of the models at once; a
+drift in all models.
 
-| правило | сценарий | ρ | метод | ложных тревог | макс. пачка | задержка | тревога парка |
+| rule | scenario | ρ | method | false alarms | max burst | delay | fleet alarm |
 |---|---|---|---|---|---|---|---|
-| Бонферрони | без дрейфа | 0.6 | сырые ряды | 1.4 | 0.7 | — | — |
-| Бонферрони | без дрейфа | 0.6 | остатки | 0.9 | 0.8 | — | — |
-| Бонферрони | 20% моделей | 0.6 | сырые ряды | 2.0 | 0.6 | 244 | — |
-| Бонферрони | 20% моделей | 0.6 | остатки | 0.7 | 0.6 | 190 | — |
-| Бонферрони | все модели | 0.6 | сырые ряды | 0.1 | 0.1 | 236 | — |
-| Бонферрони | все модели | 0.6 | остатки + тест парка | 0.2 | 0.2 | 191 | 1.0 |
-| BH в окне | без дрейфа | 0.6 | сырые ряды | **22.9** | **15.3** | — | — |
-| BH в окне | без дрейфа | 0.6 | остатки | 0.9 | 0.8 | — | — |
-| BH в окне | 20% моделей | 0.6 | сырые ряды | 12.6 | 5.3 | 167 | — |
-| BH в окне | 20% моделей | 0.6 | остатки | 1.4 | 1.1 | 138 | — |
-| BH в окне | все модели | 0.6 | сырые ряды | 6.7 | 6.5 | 115 | — |
-| BH в окне | все модели | 0.6 | остатки | 0.2 | 0.2 | не ловит | — |
-| BH в окне | все модели | 0.6 | остатки + тест парка | 0.2 | 0.2 | 191 | 1.0 |
+| Bonferroni | no drift | 0.6 | raw series | 1.4 | 0.7 | — | — |
+| Bonferroni | no drift | 0.6 | residuals | 0.9 | 0.8 | — | — |
+| Bonferroni | 20% of models | 0.6 | raw series | 2.0 | 0.6 | 244 | — |
+| Bonferroni | 20% of models | 0.6 | residuals | 0.7 | 0.6 | 190 | — |
+| Bonferroni | all models | 0.6 | raw series | 0.1 | 0.1 | 236 | — |
+| Bonferroni | all models | 0.6 | residuals + fleet test | 0.2 | 0.2 | 191 | 1.0 |
+| BH within a window | no drift | 0.6 | raw series | **22.9** | **15.3** | — | — |
+| BH within a window | no drift | 0.6 | residuals | 0.9 | 0.8 | — | — |
+| BH within a window | 20% of models | 0.6 | raw series | 12.6 | 5.3 | 167 | — |
+| BH within a window | 20% of models | 0.6 | residuals | 1.4 | 1.1 | 138 | — |
+| BH within a window | all models | 0.6 | raw series | 6.7 | 6.5 | 115 | — |
+| BH within a window | all models | 0.6 | residuals | 0.2 | 0.2 | not caught | — |
+| BH within a window | all models | 0.6 | residuals + fleet test | 0.2 | 0.2 | 191 | 1.0 |
 
-Ложные тревоги и пачки — на прогон (пачка — наибольшее число ложных тревог в одном окне),
-задержка — в шагах до тревоги у задетой модели, тревога парка — доля прогонов, где тест общего
-компонента сработал после события. Ложных тревог теста парка — 0.1–0.2 на прогон.
+False alarms and bursts are per run (a burst is the largest number of false alarms in one
+window), the delay is in steps until an affected model alarms, and the fleet alarm is the share of
+runs in which the test of the common component fired after the event. The fleet test gives 0.1–0.2
+false alarms per run.
 
-- **Пачки — проблема BH, а не Бонферрони.** С Бонферрони на сырых рядах ложных тревог мало и при
-  ρ = 0.6. BH в окне при той же корреляции без всякого дрейфа даёт 23 ложных переобучения за
-  прогон, до 15 в одном окне: общий фактор сдвигает все p-значения разом, и BH принимает это
-  за массовый дрейф.
-- **Остатки убирают пачки и ускоряют реакцию.** После вычитания общего компонента BH даёт
-  0.9 ложной тревоги вместо 23, а на дрейфе 20% моделей — и меньше ложных (1.4 против 12.6), и
-  меньше задержка (138 против 167 шагов): общий шум больше не маскирует сигнал отдельной модели.
-  С Бонферрони выигрыш тот же по направлению, но меньше (0.7 против 2 ложных, 190 против 244).
-- **Дрейф всего парка остатки не видят по построению** — он целиком уходит в общий компонент.
-  Поэтому нужен отдельный тест общего компонента: он ловит такой дрейф во всех прогонах за
-  131–191 шаг (сырые ряды с Бонферрони — 236) при 0.1–0.2 ложных тревог парка на прогон.
-- **Практический вывод.** Если модели заметно коррелированы и нужен BH, мониторить остатки плюс
-  общий компонент, а не сырые ряды. Тревога общего компонента — это сигнал «сломалось что-то
-  общее» (источник данных, пайплайн признаков), который правильнее разбирать как инцидент,
-  а не переобучать все модели. При слабой корреляции (ρ = 0.3) разница невелика.
+- **Bursts are a problem of BH, not of Bonferroni.** With Bonferroni on the raw series there are
+  few false alarms even at ρ = 0.6. BH within a window at the same correlation and without any
+  drift gives 23 false retrains per run, up to 15 in one window: the common factor shifts all
+  p-values at once, and BH takes it for a fleet-wide drift.
+- **Residuals remove the bursts and speed up the reaction.** After subtracting the common
+  component BH gives 0.9 false alarms instead of 23, and with a drift in 20% of the models both
+  fewer false alarms (1.4 against 12.6) and a shorter delay (138 against 167 steps): the common
+  noise no longer masks the signal of an individual model. With Bonferroni the gain goes the same
+  way but is smaller (0.7 against 2 false alarms, 190 against 244).
+- **Residuals cannot see a drift of the whole fleet by construction** — it goes entirely into the
+  common component. That is why a separate test of the common component is needed: it catches
+  such a drift in every run within 131–191 steps (raw series with Bonferroni: 236) at 0.1–0.2 false
+  fleet alarms per run.
+- **Practical conclusion.** If the models are noticeably correlated and BH is needed, monitor the
+  residuals plus the common component, not the raw series. An alarm of the common component
+  signals that "something shared broke" (a data source, a feature pipeline), which is better
+  handled as an incident than by retraining every model. With weak correlation (ρ = 0.3) the
+  difference is small.
 
-Ограничение: общий компонент оценивается медианой по моделям, поэтому схема рассчитана на
-парки, где одновременно дрейфует меньше половины моделей. В потоковом мониторе схема включается
-параметром `StreamingMonitor(..., split_common=True)`; тревога общего компонента выставляет
-`monitor.fleet_alarm`. Таблицы — `results/exp18_tables.md`.
+Limitation: the common component is estimated by the median across models, so the scheme assumes
+fleets in which fewer than half of the models drift at once. In the streaming monitor the scheme
+is enabled with `StreamingMonitor(..., split_common=True)`; an alarm of the common component sets
+`monitor.fleet_alarm`. Tables: `results/exp18_tables.md`.
 
-### Эксперимент 19. Время работы
+### Experiment 19. Runtime
 
-Один процесс, одно ядро, окно 100 шагов, опорный отрезок 300, горизонт 5 окон; медиана по 10
-повторам. Сравнение с Evidently и NannyML — на тех же вызовах, что в эксперименте 17.
+One process, one core, window 100 steps, reference 300, horizon 5 windows; median of 10 repeats.
+The comparison with Evidently and NannyML uses the same calls as experiment 17.
 
-| детектор | калибровка одной модели, B = 2000, GPD | B = 500, экспонента | шаг мониторинга |
+| detector | calibration of one model, B = 2000, GPD | B = 500, exponential | monitoring step |
 |---|---|---|---|
-| MeanShift(1), MeanShift(3) | 0.03–0.04 с | 0.005 с | 0.7 мкс |
-| Page-Hinkley | 0.07 с | 0.013 с | 0.9 мкс |
-| KS | 0.48 с | 0.11 с | 3.5 мкс |
-| ADWIN | 0.68 с | 0.11 с | 8 мкс |
-| river Page-Hinkley / ADWIN, без калибровки | — | — | 0.7 / 0.1 мкс |
+| MeanShift(1), MeanShift(3) | 0.03–0.04 s | 0.005 s | 0.7 µs |
+| Page-Hinkley | 0.07 s | 0.013 s | 0.9 µs |
+| KS | 0.48 s | 0.11 s | 3.5 µs |
+| ADWIN | 0.68 s | 0.11 s | 8 µs |
+| river Page-Hinkley / ADWIN, no calibration | — | — | 0.7 / 0.1 µs |
 
-| парк, Page-Hinkley | калибровка всего парка | шаг для всех моделей | с `split_common` |
+| fleet, Page-Hinkley | calibration of the whole fleet | step for all models | with `split_common` |
 |---|---|---|---|
-| 100 моделей | 10 с | 0.11 мс | 0.18 мс |
-| 1000 моделей | 99 с | 1.3 мс | 1.7 мс |
+| 100 models | 10 s | 0.11 ms | 0.18 ms |
+| 1000 models | 99 s | 1.3 ms | 1.7 ms |
 
-| на одну модель, ошибки 0/1 | время на окно из 100 шагов |
+| per model, 0/1 errors | time per window of 100 steps |
 |---|---|
-| driftfdr, MeanShift(1) | 0.05 мс |
-| NannyML, все окна одним вызовом / вызов на каждое окно | 6.5 / 10.9 мс |
-| Evidently, отчёт `ValueDrift` | 36 мс |
+| driftfdr, MeanShift(1) | 0.05 ms |
+| NannyML, all windows in one call / one call per window | 6.5 / 10.9 ms |
+| Evidently, a `ValueDrift` report | 36 ms |
 
-- **Мониторинг стоит столько же, сколько сам детектор river.** p-значение по готовому нулевому
-  распределению и поправка на множественность почти ничего не добавляют; `split_common` — ещё
-  около 0.5 мкс на модель.
-- **Единственная заметная цена — калибровка:** доли секунды на модель один раз после каждого
-  переобучения, до 100 с на парк из 1000 моделей при старте. Она распараллеливается по моделям.
-  Для PH и MeanShift это меньше 0.1 с; KS и ADWIN дороже на порядок.
-- **Evidently и NannyML на порядки медленнее на окно,** но это общие фреймворки с отчётами и
-  pandas, а не лёгкие детекторы; вывод — накладные расходы driftfdr пренебрежимы, а не «быстрее
-  конкурентов».
-- В таблице по парку при 10 моделях время шага выше из-за одной ложной тревоги: перекалибровка
-  после тревоги входит во время шага.
+- **Monitoring costs as much as the river detector itself.** A p-value from a ready null
+  distribution and the multiplicity correction add almost nothing; `split_common` adds about
+  0.5 µs per model.
+- **The only noticeable cost is calibration:** a fraction of a second per model once after each
+  retrain, up to 100 s for a fleet of 1000 models at start-up. It parallelises across models. For
+  PH and MeanShift it is under 0.1 s; KS and ADWIN are an order of magnitude more expensive.
+- **Evidently and NannyML are orders of magnitude slower per window,** but they are general
+  frameworks with reports and pandas, not lightweight detectors; the conclusion is that driftfdr's
+  overhead is negligible, not that it is "faster than the competition".
+- In the fleet table, with 10 models the step time is higher because of one false alarm: the
+  recalibration after an alarm is included in the step time.
 
-Таблицы — `results/exp19_tables.md`. Сравнение с другими инструментами требует
-`pip install evidently nannyml`, иначе эта часть пропускается.
+Tables: `results/exp19_tables.md`. The comparison with other tools requires
+`pip install evidently nannyml`, otherwise that part is skipped.
 
-### Эксперимент 20. Насколько коррелированы модели на реальных данных
+### Experiment 20. How correlated are models on real data
 
-Эксперимент 5 показал: совместный бутстреп потоков может заметно выиграть у Бонферрони только
-при сильной зависимости между моделями, и решение о нём было отложено до измерения этой
-зависимости на реальных данных. Здесь она измерена. На каждом из четырёх наборов 50 моделей;
-MeanShift(1) даёт p-значение на каждое окно из 100 шагов ошибок 0/1 против статического
-опорного отрезка (1000 шагов, как в эксп. 17). Учитываются только окна без существенного
-ухудшения (δ = 5 п.п.), то есть корреляция нулевых p-значений — именно с ней работает поправка.
-Шкала — те же числа на синтетике с долей общего фактора ρ. 2 повтора.
+Experiment 5 showed that joint bootstrap of the streams can noticeably beat Bonferroni only under
+strong dependence between models, and the decision about it was postponed until that dependence
+was measured on real data. Here it is measured. On each of the four data sets, 50 models;
+MeanShift(1) gives a p-value for every window of 100 steps of 0/1 errors against a static
+reference (1000 steps, as in exp. 17). Only windows without material degradation (δ = 5 points)
+count, that is, the correlation of null p-values — the one a correction has to deal with. The
+scale is given by the same numbers on synthetic data with a common-factor share ρ. 2 repeats.
 
-| набор | корреляция p-значений: сырые ошибки | после `split_common` | кучкование: сырые | после `split_common` |
+| data | correlation of p-values: raw errors | after `split_common` | clustering: raw | after `split_common` |
 |---|---|---|---|---|
 | Airlines | 0.88 | 0.24 | 16 | 6.4 |
 | INSECTS | 0.71 | 0.19 | 25 | 4.5 |
 | Electricity | 0.65 | 0.33 | 18 | 13 |
 | Covertype | 0.40 | 0.17 | 8.1 | 2.8 |
-| синтетика ρ = 0 / 0.3 / 0.6 / 0.9 | 0 / 0.29 / 0.59 / 0.89 | | 0.9 / 5.5 / 14 / 30 | |
+| synthetic ρ = 0 / 0.3 / 0.6 / 0.9 | 0 / 0.29 / 0.59 / 0.89 | | 0.9 / 5.5 / 14 / 30 | |
 
-Корреляция — средняя ранговая (Спирмен) по парам моделей; кучкование — дисперсия / среднее
-числа моделей с p < 0.05 в окне (1 без зависимости).
+Correlation is the mean rank (Spearman) correlation over pairs of models; clustering is the
+variance / mean of the number of models with p < 0.05 in a window (1 without dependence).
 
-- **На реальных данных модели коррелированы сильно:** по шкале синтетики это ρ ≈ 0.4–0.9.
-  Отчасти это следствие конструкции: все модели парка предсказывают один таргет на одних и тех
-  же строках. Но и в продовых парках модели часто делят источник данных и признаки.
-- **`split_common` снимает большую часть зависимости:** корреляция падает до 0.17–0.33, то есть
-  до умеренной зоны ρ ≈ 0.2–0.3, где по эксперименту 5 потолок выигрыша совместного бутстрепа
-  — 1.3–1.7 раза по уровню на модель, того же порядка, что и ошибка калибровки хвоста.
-  Кучкование ложных тревог падает в 2–6 раз.
-- **Вывод для плана:** совместный бутстреп не нужен, если остатки считаются через
-  `split_common`; зависимость, которую он учёл бы, в основном общая и уходит в общий
-  компонент. Без `split_common` на реальных парках стоит держаться Бонферрони.
-- На Electricity нулевых окон мало (в среднем 12 на повтор), поэтому её числа грубые.
+- **On real data the models are strongly correlated:** on the synthetic scale this is ρ ≈ 0.4–0.9.
+  Partly this is by construction: all models of a fleet predict the same target on the same rows.
+  But in production fleets models also often share a data source and features.
+- **`split_common` removes most of the dependence:** the correlation falls to 0.17–0.33, that is,
+  to the moderate zone ρ ≈ 0.15–0.35, where according to experiment 5 the ceiling of the gain of a
+  joint bootstrap is 1.3–1.7 times in the per-model level, the same order as the tail calibration
+  error. The clustering of false alarms falls 2.5–6 times, on Electricity only 1.3 times.
+- **Conclusion for the plan:** a joint bootstrap is not needed if the residuals come from
+  `split_common`; the dependence it would account for is mostly shared and goes into the common
+  component. Without `split_common`, Bonferroni is the safe choice on real fleets.
+- On Electricity there are few windows in which almost all models are in the null regime (12 per
+  repeat on average), so its numbers are rough.
 
-Таблицы — `results/exp20_tables.md`.
+Tables: `results/exp20_tables.md`.
 
-### Эксперимент 21. Единый бенчмарк из 100 сценариев
+### Experiment 21. A single benchmark of 100 scenarios
 
-Фиксированный набор `benchmark_suite()`: 25 случаев × 4 сида. Случаи — резкий или постепенный
-(500 шагов) дрейф силой 0.5σ или 1σ × корреляция моделей ρ = 0, 0.3, 0.6 × разрозненные дрейфы
-(10% из 100 моделей) или два события (по 5% моделей разом), плюс случай без дрейфа. Все
-калиброванные детекторы со всеми основными правилами при α = 0.05, на сырых рядах и на остатках
-`split_common`; базовая линия — Page-Hinkley river с порогом по умолчанию. F1 — событийный, как у
-Cerqueira и др.: обнаружение засчитывается в пределах 1000 шагов после дрейфа.
+The fixed suite `benchmark_suite()`: 25 cases × 4 seeds. The cases are abrupt or gradual (500
+steps) drift of 0.5σ or 1σ × correlation between models ρ = 0, 0.3, 0.6 × scattered drifts (10% of
+100 models) or two events (5% of the models each at once), plus a case without drift. All
+calibrated detectors with all main rules at α = 0.05, on the raw series and on the residuals of
+`split_common`; the baseline is river's Page-Hinkley at its default threshold. F1 is event-level,
+as in Cerqueira et al.: a detection counts within 1000 steps after the drift.
 
-| метод | F1 | точность | полнота | P(ложная тревога в окне) | задержка |
+| method | F1 | precision | recall | P(false alarm in a window) | delay |
 |---|---|---|---|---|---|
-| **MeanShift(3), остатки, BH в окне** | **0.88** | 0.85 | 0.90 | 0.016 | 507 |
-| PH, остатки, BH в окне | 0.88 | 0.85 | 0.89 | 0.013 | 460 |
-| PH, остатки, Бонферрони | 0.86 | 0.85 | 0.86 | 0.011 | 499 |
-| PH, сырые, Бонферрони | 0.78 | 0.82 | 0.77 | 0.013 | 575 |
-| PH, сырые, BH в окне | 0.77 | 0.77 | 0.83 | 0.018 | 534 |
-| ADWIN, сырые, Бонферрони | 0.65 | 0.55 | 0.81 | **0.096** | 496 |
-| PH, сырые, LORD++ | 0.48 | 0.84 | 0.47 | 0.001 | 656 |
-| PH, сырые, без поправки | 0.33 | 0.20 | 0.99 | 0.42 | 310 |
-| PH river по умолчанию | **0.06** | 0.03 | 1.00 | 0.89 | 208 |
+| **MeanShift(3), residuals, BH within a window** | **0.88** | 0.85 | 0.90 | 0.016 | 507 |
+| PH, residuals, BH within a window | 0.88 | 0.85 | 0.89 | 0.013 | 460 |
+| PH, residuals, Bonferroni | 0.86 | 0.85 | 0.86 | 0.011 | 499 |
+| PH, raw, Bonferroni | 0.78 | 0.82 | 0.77 | 0.013 | 575 |
+| PH, raw, BH within a window | 0.77 | 0.77 | 0.83 | 0.018 | 534 |
+| ADWIN, raw, Bonferroni | 0.65 | 0.55 | 0.81 | **0.096** | 496 |
+| PH, raw, LORD++ | 0.48 | 0.84 | 0.47 | 0.001 | 656 |
+| PH, raw, uncorrected | 0.33 | 0.20 | 0.99 | 0.42 | 310 |
+| river PH at its defaults | **0.06** | 0.03 | 1.00 | 0.89 | 208 |
 
-Задержка — средняя по пойманным дрейфам, в шагах. Полная таблица и разрезы F1 по каждому
-фактору — `results/exp21_tables.md`.
+The delay is the mean over caught drifts, in steps. The full table and F1 broken down by every
+factor: `results/exp21_tables.md`.
 
-| F1 по корреляции моделей | ρ = 0 | ρ = 0.3 | ρ = 0.6 |
+| F1 by correlation between models | ρ = 0 | ρ = 0.3 | ρ = 0.6 |
 |---|---|---|---|
-| PH, сырые, Бонферрони | 0.80 | 0.79 | 0.74 |
-| PH, остатки, Бонферрони | 0.78 | 0.85 | 0.95 |
-| MeanShift(3), остатки, BH в окне | 0.81 | 0.89 | 0.95 |
+| PH, raw, Bonferroni | 0.80 | 0.79 | 0.74 |
+| PH, residuals, Bonferroni | 0.78 | 0.85 | 0.95 |
+| MeanShift(3), residuals, BH within a window | 0.81 | 0.89 | 0.95 |
 
-- **Лучшая конфигурация на всём наборе — остатки `split_common` плюс поправка:** F1 0.86–0.88
-  против 0.78 у лучшей на сырых рядах, 0.33 без поправки и 0.06 у river по умолчанию. river
-  ловит все дрейфы, но 97% его тревог ложные — тот же профиль «полнота около 1, точность
-  0.03–0.08», что обзор приводит для GMA и RDDM из бенчмарка Cerqueira и др.
-- **Выигрыш остатков растёт с корреляцией** (F1 0.74 → 0.95 при ρ = 0.6), а при независимых
-  моделях почти ничего не стоит (0.80 → 0.78). На сырых рядах корреляция вредит: общий фактор
-  маскирует сигнал отдельной модели. Остатки его убирают, и сигнал становится чище, чем
-  без корреляции.
-- **Поправка на множественность — главный рычаг:** без неё F1 0.13–0.33 при любом детекторе.
-  Выбор между Бонферрони и BH в окне вторичен (±0.02 F1); BH чуть быстрее.
-- **Онлайн-FDR (LORD++) почти не ловит слабые дрейфы:** F1 0.01–0.08 при сдвиге 0.5σ, хотя
-  точность высокая. Это подтверждает эксперименты 3 и 12.
-- **ADWIN — единственный детектор, у которого не выдерживается уровень ложных тревог:**
-  вероятность ложной тревоги в окне 0.10–0.15 вместо ≤ 0.05 (эксп. 10).
-- В сценарии без дрейфа Бонферрони на сырых рядах при ρ = 0.3 не дал ни одной ложной
-  тревоги — он консервативен при корреляции (эксп. 5); на остатках — 0.016 на окно, в пределах α.
+- **The best configuration over the whole suite is `split_common` residuals plus a correction:**
+  F1 0.86–0.88 against 0.78 for the best on the raw series, 0.33 without a correction and 0.06 for
+  river's defaults. river catches every drift, but 97% of its alarms are false — the same profile
+  of "recall near 1, precision 0.03–0.08" that the review cites for GMA and RDDM in the benchmark
+  of Cerqueira et al.
+- **The gain from residuals grows with correlation** (F1 0.74 → 0.95 at ρ = 0.6) and costs almost
+  nothing with independent models (0.80 → 0.78). On the raw series correlation hurts: the common
+  factor masks an individual model's signal. Residuals remove it, and the signal becomes cleaner
+  than without correlation.
+- **The multiplicity correction is the main lever:** without it F1 is 0.13–0.33 for any detector.
+  The choice between Bonferroni and BH within a window is secondary (±0.02 F1); BH is slightly
+  faster.
+- **Online FDR (LORD++) almost never catches weak drifts:** F1 0.01–0.08 at a 0.5σ shift, although
+  its precision is high. This confirms experiments 3 and 12.
+- **ADWIN is the only detector whose false-alarm level does not hold:** the probability of a
+  false alarm in a window is 0.10–0.15 instead of ≤ 0.05 (exp. 10).
+- In the scenario without drift, Bonferroni on the raw series at ρ = 0.3 gave no false alarm at
+  all — it is conservative under correlation (exp. 5); on the residuals, 0.016 per window, within
+  α.
 
-### Эксперимент 22. Парк моделей волатильности на часовых курсах валют
+### Experiment 22. A fleet of volatility models on hourly exchange rates
 
-Данные близки к продовым: часовые котировки пяти валютных пар (AUD/USD, EUR/USD, GBP/USD,
-NZD/USD, USD/CAD) с 2010 по март 2026 года, по ~100 тысяч часов на пару (выгрузка MetaTrader 5;
-в репозиторий не входит, загрузчик — `fx_scenario`). На каждой паре восемь моделей прогнозируют
-модуль доходности следующего часа, то есть волатильность: статические (средний уровень, суточный
-профиль, HAR, HAR с часом, гребневая регрессия на лагах) обучены один раз на 2010–2011 годах;
-адаптивные (EWMA 0.94, EWMA 0.99, EWMA с суточным профилем) подстраивают уровень сами. Всего 40
-моделей. Потеря прогноза — `|log(|r| + c) − log(f + c)|`, шаг — торговый день (средняя потеря
-за день), опорный отрезок 120 дней, окно 20 дней, горизонт 3 окна. Разметки дрейфов нет: тревога
-верна, если средняя потеря модели за следующие 60 дней выше опорной больше чем на δ. Смены
-режимов волатильности (затишье 2012–2014, 2015, 2020, 2022) ломают статические модели по-настоящему:
-их потеря гуляет по годам на 0.8–1.03, у адаптивных — 0.6–0.75.
+Data close to production: hourly quotes of five currency pairs (AUD/USD, EUR/USD, GBP/USD,
+NZD/USD, USD/CAD) from 2010 to March 2026, ~100 thousand hours per pair (a MetaTrader 5 export; not
+part of the repository, the loader is `fx_scenario`). On each pair eight models forecast the
+absolute return of the next hour, that is, volatility: static ones (unconditional mean, daily
+profile, HAR, HAR with the hour, ridge regression on lags) are trained once on 2010–2011; adaptive
+ones (EWMA 0.94, EWMA 0.99, EWMA with the daily profile) adjust their level themselves. 40 models
+in total. The loss of a forecast is `|log(|r| + c) − log(f + c)|`, a step is a trading day (the
+mean loss over the day), the reference 120 days, the window 20 days, the horizon 3 windows. There
+are no drift labels: an alarm is right if the model's mean loss over the next 60 days exceeds the
+reference by more than δ. Changes of volatility regime (the calm of 2012–2014, 2015, 2020, 2022)
+break the simplest static models for real: for the mean and the daily profile the loss wanders
+between 0.76 and 1.03 from year to year; for HAR, the lag regression and EWMA, 0.6–0.76.
 
-| δ = 0.05 | ложных тревог на модель в год | доля ложных | поймано устойчивых ухудшений (≥ 60 дней) | ухудшений больше 0.2 | задержка, дней |
+| δ = 0.05 | false alarms per model per year | share of false | persistent degradations caught (≥ 60 days) | degradations above 0.2 | delay, days |
 |---|---|---|---|---|---|
-| Page-Hinkley river по умолчанию | 0 | — | **0%** | 0% | — |
-| MeanShift(3), без поправки | 0.004 | 0.05 | 57% | 100% | 100 |
-| MeanShift(3), Бонферрони | 0 | 0 | 31% | 72% | 140 |
-| MeanShift(3), BH в окне | 0.002 | 0.04 | 29% | 63% | 120 |
-| MeanShift(3), BH в окне + `split_common` | 0.007 | 0.10 | 50% | 77% | 80 |
-| PH, Бонферрони | 0 | 0 | 20% | 36% | 130 |
+| river Page-Hinkley at its defaults | 0 | — | **0%** | 0% | — |
+| MeanShift(3), uncorrected | 0.004 | 0.05 | 57% | 100% | 100 |
+| MeanShift(3), Bonferroni | 0 | 0 | 31% | 72% | 140 |
+| MeanShift(3), BH within a window | 0.002 | 0.04 | 29% | 63% | 120 |
+| MeanShift(3), BH within a window + `split_common` | 0.007 | 0.10 | 50% | 77% | 80 |
+| PH, Bonferroni | 0 | 0 | 20% | 36% | 130 |
 
-Устойчивое ухудшение — серия ненулевых окон длиной от трёх; разбивка по размеру ухудшения
-посчитана по небольшому числу эпизодов (десятки), поэтому она грубая. Три сида бутстрепа.
+A persistent degradation is a run of at least three non-null windows; the breakdown by the size
+of the degradation rests on a small number of episodes (dozens), so it is rough. Three bootstrap
+seeds.
 
-- **river по умолчанию молчит все 14 лет.** Его порог λ = 50 задан в единицах сигнала, а дневная
-  потеря порядка 0.7, так что накопить 50 он не может. На ошибках 0/1 тот же порог давал
-  лавину ложных тревог (эксп. 14): порог по умолчанию не переносится между задачами ни в какую
-  сторону. Калиброванный порог от единиц сигнала не зависит.
-- **Ложных тревог почти нет:** с поправкой 0–0.007 на модель в год, то есть одна ложная тревога
-  на парк из 40 моделей раз в несколько лет. Нуль существенного ухудшения здесь строгий:
-  на нулевых окнах модели чаще улучшаются, чем ухудшаются.
-- **Крупные ухудшения ловятся, мелкие — нет.** Ухудшения больше 0.2 (примерно +30% к потере)
-  пойманы в 63–100% случаев, до 0.12 — редко. Шум средней за окно (около 0.05–0.07) сопоставим
-  с мелкими ухудшениями, и 20 торговых дней на окно их не различают.
-- **При 40 моделях и строгом нуле поправка стоит мощности:** без поправки MeanShift(3) ловит 57%
-  устойчивых ухудшений при доле ложных 0.05, с Бонферрони — 31% без ложных. Поправка на
-  множественность окупается, когда моделей сотни или нуль мягкий (эксп. 2, 14); на небольшом
-  парке со строгим δ её можно ослабить (BH вместо Бонферрони или больший α).
-- **`split_common` помогает и здесь:** с BH ловит 50% устойчивых ухудшений против 29% на сырых
-  рядах, с задержкой 80 дней вместо 120, ценой доли ложных 0.10. Общий компонент срабатывал один
-  раз за 14 лет, при δ = 0.05 — ложно.
-- **Задержка — 3–7 окон (80–140 торговых дней).** Для моделей, которые переобучают раз в квартал,
-  это приемлемо; для быстрой реакции нужно окно короче, и мелкие ухудшения станут ещё менее
-  различимы.
+- **river's defaults stay silent for all 14 years.** Its threshold λ = 50 is set in signal units,
+  and the daily loss is about 0.7, so it can never accumulate 50. On 0/1 errors the same threshold
+  produced a flood of false alarms (exp. 14): a default threshold does not transfer between tasks
+  in either direction. A calibrated threshold does not depend on the units of the signal.
+- **There are almost no false alarms:** with a correction 0–0.007 per model per year, that is, one
+  false alarm for a fleet of 40 models every few years. The material-degradation null is strict
+  here: in null windows models improve more often than they get worse.
+- **Large degradations are caught, small ones are not.** Degradations above 0.2 (roughly +30% of
+  the loss) are caught in 63–100% of cases, up to 0.12 rarely. The noise of a window mean (about
+  0.05–0.07) is comparable to small degradations, and 20 trading days per window cannot tell them
+  apart.
+- **With 40 models and a strict null, the correction costs power:** without a correction
+  MeanShift(3) catches 57% of persistent degradations at a false share of 0.05, with Bonferroni
+  31% with no false alarms. The multiplicity correction pays off when there are hundreds of models
+  or the null is loose (exp. 2, 14); on a small fleet with a strict δ it can be relaxed (BH instead
+  of Bonferroni, or a larger α).
+- **`split_common` helps here too:** with BH it catches 50% of persistent degradations against 29%
+  on the raw series, with a delay of 80 days instead of 120, at a false share of 0.10. The common
+  component fired once in 14 years, falsely at δ = 0.05.
+- **The delay is 3–7 windows (80–140 trading days).** For models retrained every quarter this is
+  acceptable; for a fast reaction the window must be shorter, and small degradations become even
+  less distinguishable.
 
-Таблицы — `results/exp22_tables.md`. Запуск: `python experiments/exp22_fx.py КАТАЛОГ_С_CSV`.
+Tables: `results/exp22_tables.md`. Run: `python experiments/exp22_fx.py DIRECTORY_WITH_CSV`.
 
-## Ограничения
+## Limitations
 
-- Большинство выводов получено на синтетике; реальных наборов четыре, размечен из них один
-  (INSECTS, и то неполно), остальные оцениваются через оракул будущей ошибки.
-- Модели на реальных данных не переобучаются по-настоящему: «переобучение» — это сбор нового
-  опорного отрезка для той же модели.
-- AR-sieve бутстреп на AR-синтетике корректно специфицирован, поэтому его точность здесь
-  оптимистична.
-- Хвост калибровки для ADWIN антиконсервативен примерно втрое (эксперимент 10).
-- ADWIN реализован на фиксированной сетке разрезов; сжатие окна не нужно, потому что после
-  тревоги детектор и так перезапускается с нового опорного отрезка.
-- Гарантии онлайн-FDR и BH выведены для независимых (или PRDS) p-значений, а здесь p-значения
-  зависимы и по времени (перекрывающиеся горизонты), и между моделями.
-- Решения принимаются только в конце окна; потоки должны присылать по одному наблюдению за шаг
-  (нерегулярные события сводятся к шагам через `bucket_means`).
+- Most conclusions come from synthetic data; there are five real data sources (four public data
+  sets and hourly FX rates), of which only one is labelled (INSECTS, and incompletely); the rest
+  are judged by the oracle of future error. In every real fleet the models predict one target on
+  the same data, which overstates their correlation compared with a heterogeneous production fleet.
+- Models on real data are not actually retrained: "retraining" means collecting a new reference
+  for the same model.
+- The AR-sieve bootstrap is correctly specified on AR synthetic data, so its accuracy here is
+  optimistic.
+- ADWIN's tail calibration is about three times anti-conservative (experiment 10).
+- ADWIN is implemented on a fixed grid of cuts; shrinking the window is not needed, because after
+  an alarm the detector restarts from a new reference anyway.
+- The guarantees of online FDR and BH are derived for independent (or PRDS) p-values, whereas here
+  the p-values are dependent both in time (overlapping horizons) and across models.
+- Decisions are made only at the end of a window. In the streaming monitor each model has its own
+  clock, but in `split_common` mode every model must report at every step; irregular events are
+  reduced to steps with `bucket_means`.
+- On a noisy signal only material degradations are caught: on FX rates a rise of the loss below
+  ~15% is indistinguishable from the noise of a window (exp. 22).
 
-## Следующие шаги
+## Next steps
 
-Сделано: калибровка и поправка на множественность (эксп. 1–3), кластерные дрейфы и зависимость
-(4, 5, 13), калибровка хвоста (6, 10), реальные данные и нулевая гипотеза существенного ухудшения
-(7–9, 14, 16), p(X) против p(y|X) и циклический дрейф (11), типы и сила дрейфа (12), бенчмарк
-детекторов (15), сравнение с Evidently и NannyML (17), пачки ложных тревог против массового
-дрейфа (18), время работы (19), зависимость моделей на реальных данных (20), единый бенчмарк
-из 100 сценариев (21), парк моделей волатильности на курсах валют (22).
+Done: calibration and the multiplicity correction (exp. 1–3), clustered drifts and dependence
+(4, 5, 13), tail calibration (6, 10), real data and the material-degradation null (7–9, 14, 16),
+p(X) vs p(y|X) and cyclic drift (11), types and sizes of drift (12), a benchmark of detectors
+(15), comparison with Evidently and NannyML (17), bursts of false alarms vs fleet-wide drift (18),
+runtime (19), dependence between models on real data (20), a single benchmark of 100 scenarios
+(21), a fleet of volatility models on exchange rates (22).
 
-Закрыто выводами:
+Closed with conclusions:
 
-- **Какую ошибку контролировать** (эксп. 4, 13, 18). Бонферрони в окне держит вероятность
-  хотя бы одной ложной тревоги в окне, то есть частоту ложных тревог во времени, при любой
-  корреляции моделей. BH в окне держит долю ложных внутри окна, но за весь прогон при
-  коррелированных моделях она растёт до 0.17; с `split_common` пачки уходят. e-BH и онлайн-FDR
-  проигрывают по задержке. Формальная гарантия BH при зависимых p-значениях не доказана.
-- **Хвост калибровки ADWIN** (эксп. 10). GPD-хвост и 2000 реплик не помогают: статистика —
-  максимум по многим разрезам, ошибка остаётся втрое выше номинала. Для строгого контроля — PH,
-  KS или MeanShift; `StreamingMonitor` предупреждает при выборе ADWIN.
+- **Which error to control** (exp. 4, 13, 18). Bonferroni within a window holds the probability of
+  at least one false alarm in a window, that is, the rate of false alarms over time, under any
+  correlation between models. BH within a window holds the share of false alarms within a window,
+  but over the whole run it grows to 0.17 with correlated models; with `split_common` the bursts
+  disappear. e-BH and online FDR lose on delay. A formal guarantee for BH with dependent p-values
+  has not been proven.
+- **ADWIN's tail calibration** (exp. 10). A GPD tail and 2000 replicates do not help: the
+  statistic is a maximum over many cuts, and the error stays three times above nominal. For strict
+  control use PH, KS or MeanShift; `StreamingMonitor` warns when ADWIN is chosen.
 
-Открытые пункты — в разделе [«План дальнейшего исследования»](#план-дальнейшего-исследования).
+Open items are in [the research plan](#research-plan).
 
-## Исходный исследовательский план и статус
+## The original research plan and status
 
-| Пункт заявки | Сделано | Осталось |
+| Item of the proposal | Done | Remaining |
 |---|---|---|
-| 4 базовых детектора | PH, DDM, ADWIN, KS в окне и скользящий KS; плюс MeanShift; PH и DDM совпадают с river, `from_river` | — (сжатие окна ADWIN не нужно: после тревоги детектор и так перезапускается) |
-| Калибровка блочным ресемплингом к единому FAR, сигнал → p-значение, проверка равномерности | блочный, стационарный, AR-sieve бутстреп, учёт неопределённости параметров (`sieve_pu`), GPD-хвост (эксп. 1, 6, 10) | хвост ADWIN — закрыт выводом (эксп. 10) |
-| Нулевая гипотеза на реальных данных | режимный нуль между точками сдвига; нуль существенного ухудшения с допуском δ, устойчивость (эксп. 7–9, 14, 16) | — |
-| Синтетический стенд: резкий, постепенный, циклический дрейф; p(X) и p(y\|X) раздельно; 1–500 потоков | всё, по экспериментам 1–5, 11–13, 18; фиксированный набор из 100 сценариев `benchmark_suite` (эксп. 21) | — |
-| Метрики MTFA, MDR, MTD, FAR, R-measure | MTFA, MDR, MTD, FAR, плюс FDR, MTR, цена задержки, точность / полнота / F1 обнаружения как у Cerqueira и др. (`summarize`) | — (R-measure в источниках обзора не определена, вместо неё F1) |
-| Онлайн-FDR: alpha-investing, LORD, SAFFRON и родственные | плюс LOND, BatchBH, BH, BH Стори, e-BH, Бонферрони в окне (эксп. 2–4, 12, 13) | e-детекторы и ошибка на терпение (EOP, Dandapanthula–Ramdas) — для статьи |
-| Зависимость между потоками | потолок выигрыша (эксп. 5), Бонферрони при любой корреляции (эксп. 13), остатки и тест парка (эксп. 18), корреляция на реальных данных (эксп. 20) | — (совместный бутстреп не нужен при `split_common`, эксп. 20) |
-| Политика переобучения, граница Парето по числу потоков и типу дрейфа | эксп. 2–4, 12; допуск из стоимости переобучения | — |
-| Реальные данные: Electricity, Airlines, Covertype, INSECTS | все четыре (эксп. 7, 14, 16); плюс парк моделей волатильности на курсах пяти валютных пар за 2010–2026 (эксп. 22) | — |
-| Сравнение с существующими инструментами | Evidently и NannyML (эксп. 17), время работы (эксп. 19) | — |
-| Открытый репозиторий поверх river, демонстрация в реальном времени | пакет, потоковый монитор с сохранением состояния, консольный пример, демонстрация с проигрыванием (`examples/live_demo.py`, `results/demo.html`) | — |
-| Статья, валидация с практиком | черновик связанных работ (`docs/related_work.md`) | текст статьи; продовые логи с партнёром |
+| 4 basic detectors | PH, DDM, ADWIN, windowed and sliding KS; plus MeanShift; PH and DDM match river, `from_river` | — (shrinking ADWIN's window is not needed: after an alarm the detector restarts anyway) |
+| Calibration by block resampling to a single FAR, signal → p-value, uniformity check | block, stationary, AR-sieve bootstrap, parameter uncertainty (`sieve_pu`), GPD tail (exp. 1, 6, 10) | ADWIN's tail — closed with a conclusion (exp. 10) |
+| The null hypothesis on real data | regime null between change points; material-degradation null with tolerance δ, persistence (exp. 7–9, 14, 16) | — |
+| Synthetic test bed: abrupt, gradual, cyclic drift; p(X) and p(y\|X) separately; 1–500 streams | all of it, in experiments 1–5, 11–13, 18; the fixed suite of 100 scenarios `benchmark_suite` (exp. 21) | — |
+| Metrics MTFA, MDR, MTD, FAR, R-measure | MTFA, MDR, MTD, FAR, plus FDR, MTR, cost of delay, event-level precision / recall / F1 as in Cerqueira et al. (`summarize`) | — (R-measure is not defined in the review's sources; F1 is used instead) |
+| Online FDR: alpha-investing, LORD, SAFFRON and relatives | plus LOND, BatchBH, BH, Storey's BH, e-BH, Bonferroni within a window (exp. 2–4, 12, 13) | e-detectors and the error over patience (EOP, Dandapanthula–Ramdas) — for the paper |
+| Dependence between streams | the ceiling of the gain (exp. 5), Bonferroni under any correlation (exp. 13), residuals and the fleet test (exp. 18), correlation on real data (exp. 20) | — (a joint bootstrap is not needed with `split_common`, exp. 20) |
+| Retraining policy, Pareto frontier by number of streams and type of drift | exp. 2–4, 12; tolerance from the cost of a retrain | — |
+| Real data: Electricity, Airlines, Covertype, INSECTS | all four (exp. 7, 14, 16); plus a fleet of volatility models on five currency pairs for 2010–2026 (exp. 22) | — |
+| Comparison with existing tools | Evidently and NannyML (exp. 17), runtime (exp. 19) | — |
+| Open repository on top of river, real-time demonstration | package, streaming monitor with persistent state, console example, replayable demo (`examples/live_demo.py`, `results/demo.html`) | — |
+| Paper, validation with a practitioner | draft of related work ([related_work.md](related_work.md)) | text of the paper; production logs with a partner |
 
-## План дальнейшего исследования
+## Research plan
 
-1. **Связанные работы для статьи:** черновик — [related_work.md](related_work.md); осталось
-   сверить работы вне обзора по оригиналам и формально сопоставить ошибку в окне с EOP
-   (Dandapanthula–Ramdas).
-2. **Продовые логи** — нужен партнёр.
+1. **Related work for the paper:** draft in [related_work.md](related_work.md); what remains is to
+   check the works outside the review against the originals and to compare the per-window error
+   with EOP (Dandapanthula–Ramdas) formally.
+2. **Production logs** — a partner is needed.
 
-## Запуск экспериментов
+## Running the experiments
 
 ```bash
 pip install -e ".[dev,datasets]"
-python experiments/exp1_calibration.py     # ~15 мин на 4 ядрах; --quick для пробы
-python experiments/exp2_scaling.py         # ~7 мин
-python experiments/exp3_tradeoff.py        # ~3 мин
-python experiments/exp4_clustered.py       # ~9 мин
-python experiments/exp5_dependence.py      # ~6 мин
-python experiments/exp6_tail.py            # ~20 мин
+python experiments/exp1_calibration.py     # ~15 min on 4 cores; --quick for a trial run
+python experiments/exp2_scaling.py         # ~7 min
+python experiments/exp3_tradeoff.py        # ~3 min
+python experiments/exp4_clustered.py       # ~9 min
+python experiments/exp5_dependence.py      # ~6 min
+python experiments/exp6_tail.py            # ~20 min
 python experiments/exp7_real.py --method sieve_pu
 python experiments/exp8_material.py
 python experiments/exp9_persistence.py
-python experiments/exp10_tail_shape.py     # ~40 мин
+python experiments/exp10_tail_shape.py     # ~40 min
 python experiments/exp11_px_pyx.py
 python experiments/exp12_drift_types.py
 python experiments/exp13_ebh.py
 python experiments/exp14_real_all.py
 python experiments/exp15_benchmark.py
 python experiments/exp16_time_buckets.py
-python experiments/exp17_tools.py          # нужен pip install evidently nannyml
-python experiments/exp18_bursts.py         # ~12 мин
-python experiments/exp19_runtime.py        # ~10 мин, один процесс
-python experiments/exp20_real_correlation.py  # ~2 мин
-python experiments/exp21_benchmark.py      # ~1 ч
-python experiments/exp22_fx.py DATA_DIR    # ~2 мин; часовые CSV MetaTrader 5, в репозиторий не входят
+python experiments/exp17_tools.py          # needs pip install evidently nannyml
+python experiments/exp18_bursts.py         # ~12 min
+python experiments/exp19_runtime.py        # ~10 min, one process
+python experiments/exp20_real_correlation.py  # ~2 min
+python experiments/exp21_benchmark.py      # ~1 h
+python experiments/exp22_fx.py DATA_DIR    # ~2 min; MetaTrader 5 hourly CSVs, not in the repository
 ```

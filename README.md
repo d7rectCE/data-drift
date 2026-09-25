@@ -41,8 +41,8 @@ did not get worse. NannyML's performance monitoring is about as accurate as drif
 ±3σ threshold is fixed and ignores the number of models; in driftfdr the false-alarm level, the
 correction for fleet size and the tolerated degradation are explicit. Monitoring is as fast as
 the river detector itself (about 1 µs per step per model); calibration takes a fraction of a
-second per model after each retrain (experiment 19). Details and all 22 experiments (in Russian)
-are in [docs/experiments.md](docs/experiments.md).
+second per model after each retrain (experiment 19). Details and all 22 experiments are in
+[docs/experiments.md](docs/experiments.md).
 
 ### Installation
 
@@ -121,15 +121,15 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 3. **A fleet-level decision.** The p-values of all models whose window has ended go through a
    multiplicity correction; alarmed models are retrained and collect a new reference.
 
-The method, the relation to the literature and the experiment log are in Russian:
-[docs/method.md](docs/method.md), [docs/related_work.md](docs/related_work.md),
-[docs/experiments.md](docs/experiments.md). The API reference for every class, method and
-function is in English: [docs/api.md](docs/api.md).
+The method: [docs/method.md](docs/method.md); the relation to the literature:
+[docs/related_work.md](docs/related_work.md); the reference for every class, method and function:
+[docs/api.md](docs/api.md). Every document except the API reference also has a Russian version
+(`*.ru.md`).
 
 ### Limitations
 
-- The false-alarm level holds for PH, KS and MeanShift; ADWIN's tail calibration is about three
-  times anti-conservative.
+- The false-alarm level approximately holds for PH, KS and MeanShift (actual 0.044–0.064 at a
+  nominal 0.05); ADWIN's tail calibration is about three times anti-conservative.
 - The results come from synthetic data, four public data sets and hourly FX rates; there has been
   no validation on production logs, and the models are not actually retrained (an alarm only
   starts a new reference).
@@ -137,7 +137,7 @@ function is in English: [docs/api.md](docs/api.md).
   Bonferroni is the safer choice.
 - On noisy signals (for example, the daily loss of FX volatility models) only material
   degradations are caught: rises of less than ~15% are indistinguishable from noise (exp. 22).
-- The full list is in [docs/experiments.md](docs/experiments.md#ограничения).
+- The full list is in [docs/experiments.md](docs/experiments.md#limitations).
 
 ### Repository layout
 
@@ -155,7 +155,7 @@ src/driftfdr/
   datasets.py      model fleets on INSECTS, Electricity, Airlines, Covertype and hourly FX rates
 experiments/       22 experiments (exp1…exp22)
 results/           tables and figures of the experiments, the demo page
-docs/              method, API reference (generated: python docs/gen_api.py), experiment log
+docs/              method, related work, experiment log (English and *.ru.md), API reference (generated: python docs/gen_api.py)
 tests/             76 tests: agreement with river, bootstrap, calibration, procedures, streaming
 examples/          online monitoring example and the replayable demo
 ```
@@ -213,7 +213,7 @@ driftfdr 0.88, у Page-Hinkley river по умолчанию 0.06: он лови
 ухудшение задаются явно. По скорости мониторинг не медленнее самого детектора river (около 1 мкс
 на шаг на модель); калибровка занимает доли секунды на модель после каждого переобучения
 (эксп. 19). Подробности и все 22 эксперимента — в
-[docs/experiments.md](docs/experiments.md).
+[docs/experiments.ru.md](docs/experiments.ru.md).
 
 ### Установка
 
@@ -291,14 +291,15 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
 3. **Решение по парку.** p-значения всех моделей, у которых закончилось окно, проходят через
    поправку на множественность; модели с тревогой переобучаются и собирают новый опорный отрезок.
 
-Подробное описание — [docs/method.md](docs/method.md); связь с литературой —
-[docs/related_work.md](docs/related_work.md); справочник по всем классам, методам и
-функциям (на английском) — [docs/api.md](docs/api.md).
+Подробное описание — [docs/method.ru.md](docs/method.ru.md); связь с литературой —
+[docs/related_work.ru.md](docs/related_work.ru.md); справочник по всем классам, методам и
+функциям (только на английском) — [docs/api.md](docs/api.md). У каждого документа, кроме
+справочника API, есть английская версия (без `.ru` в имени).
 
 ### Ограничения
 
-- Уровень ложных тревог выдерживается для PH, KS и MeanShift; у ADWIN калибровка хвоста
-  антиконсервативна примерно втрое.
+- Уровень ложных тревог примерно выдерживается для PH, KS и MeanShift (фактически 0.044–0.064
+  при номинале 0.05); у ADWIN калибровка хвоста антиконсервативна примерно втрое.
 - Выводы получены на синтетике, четырёх открытых наборах данных и часовых курсах валют; проверки
   на продовых логах не было, и модели не переобучаются по-настоящему (тревога лишь запускает
   сбор нового опорного отрезка).
@@ -306,7 +307,7 @@ monitor = StreamingMonitor.load("monitor.npz", detector_factory=lambda: MeanShif
   надёжнее Бонферрони.
 - На шумном сигнале (например, дневная потеря моделей волатильности на курсах валют) ловятся
   только существенные ухудшения: рост меньше ~15% неотличим от шума (эксп. 22).
-- Полный список — в [docs/experiments.md](docs/experiments.md#ограничения).
+- Полный список — в [docs/experiments.ru.md](docs/experiments.ru.md#ограничения).
 
 ### Структура репозитория
 
@@ -324,7 +325,7 @@ src/driftfdr/
   datasets.py      парки моделей на INSECTS, Electricity, Airlines, Covertype и часовых курсах валют
 experiments/       22 эксперимента (exp1…exp22)
 results/           таблицы и графики экспериментов, страница демонстрации
-docs/              метод, справочник API (генерируется: python docs/gen_api.py), журнал экспериментов
+docs/              метод, связанные работы, журнал экспериментов (английский и *.ru.md), справочник API (генерируется: python docs/gen_api.py)
 tests/             76 тестов: совпадение с river, бутстреп, калибровка, процедуры, потоковый режим
 examples/          пример онлайн-мониторинга и демонстрация с проигрыванием
 ```
