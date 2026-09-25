@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import argparse
 import glob
+import os
 import time
+from multiprocessing import Pool
 
 import numpy as np
 import pandas as pd
@@ -158,6 +160,21 @@ def fx_task(args):
              "degraded_days_per_model_year": degraded / years, "us_per_model_step": us}]
 
 
+def resumable(func, tasks, path, keys):
+    """``run_parallel`` that appends each finished task's rows to ``path`` and skips tasks
+    already there, so an interrupted run can be restarted where it stopped."""
+    done = pd.read_csv(path) if path.exists() else pd.DataFrame(columns=keys)
+    finished = set(map(tuple, done[keys].astype(str).to_numpy()))
+    todo = [t for t in tasks if (str(t[0]), str(t[1]), str(t[2])) not in finished]
+    print(f"{len(tasks) - len(todo)} tasks already done, {len(todo)} to run", flush=True)
+    started = time.time()
+    with Pool(os.cpu_count()) as pool:
+        for i, rows in enumerate(pool.imap_unordered(func, todo), 1):
+            pd.DataFrame(rows).to_csv(path, mode="a", header=not path.exists(), index=False)
+            print(f"  {i}/{len(todo)} tasks done, {time.time() - started:.0f}s", flush=True)
+    return pd.read_csv(path)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
@@ -165,8 +182,9 @@ def main():
     args = parser.parse_args()
     n, seeds, null_seeds = (30, 1, 1) if args.quick else (100, 2, 6)
     tasks = [(c, s, m, n) for c in CASES for s in range(null_seeds if c in NULL_CASES else seeds) for m in METHODS]
-    raw = run_parallel(synthetic_task, tasks)
+    raw = resumable(synthetic_task, tasks, RESULTS / "exp23_runs.partial.csv", ["case", "seed", "method"])
     raw.to_csv(RESULTS / "exp23_runs.csv", index=False)
+    (RESULTS / "exp23_runs.partial.csv").unlink()
     cols = ["false_alarms", "p_false_alarm_per_100_steps", "mean_delay", "degraded_per_drift", "missed", "f1",
             "us_per_model_step"]
     drift = raw[~raw.case.isin(list(NULL_CASES))]
