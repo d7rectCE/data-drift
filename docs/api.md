@@ -1233,3 +1233,43 @@ All 31 days of Airlines, 0/1 delay errors averaged per (day, hour) bucket.
 
 Models are trained on the first day. A step is one hour, so a window of 24
 steps covers a full daily cycle. Days are counted from changes of DayOfWeek.
+
+### `read_mt5_csv`
+
+```python
+read_mt5_csv(path)
+```
+
+Hourly close prices from a MetaTrader 5 export (tab-separated ``<DATE> <TIME> ... <CLOSE>``).
+
+### `fx_volatility_forecasts`
+
+```python
+fx_volatility_forecasts(abs_ret: np.ndarray, hour: np.ndarray, train: int, c: float = 0.0001) -> dict[str, np.ndarray]
+```
+
+Forecasts of next-hour absolute log return from the eight models of ``FX_MODELS``.
+
+``abs_ret[t]`` is forecast from data up to ``t - 1``. Static models (unconditional
+mean, hour-of-day profile, HAR and ridge regressions on lags) are fitted once on
+the first ``train`` hours; EWMA models adapt their level continuously, and
+``EWMA × hour`` applies the static hour profile to an adaptive level. Regressions
+work on ``log(|r| + c)``.
+
+### `fx_scenario`
+
+```python
+fx_scenario(paths, train_until: str = '2012-01-01', c: float = 0.0001) -> Scenario
+```
+
+A fleet of volatility models on hourly FX data, monitored by the daily mean loss.
+
+Every file in ``paths`` (MetaTrader 5 hourly exports, see ``read_mt5_csv``) is one
+currency pair; the pairs are aligned on common hours. For each pair the eight models
+of ``FX_MODELS`` forecast the next-hour absolute log return, trained on the hours
+before ``train_until``. The loss of a forecast is ``|log(|r| + c) - log(f + c)|``; a
+step of the scenario is one trading day (22:00 to 22:00, days with fewer than 12
+hours dropped; the mean hourly loss of that day), so the daily cycle of volatility
+does not look like drift (experiment 16). There are no
+drift labels: use ``with_material_null`` with ``forward_error`` of the loss.
+Model names are stored in ``drift_kind`` as ``"PAIR/model"``.

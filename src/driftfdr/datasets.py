@@ -272,3 +272,104 @@ def airlines_hourly_scenario(n_models=50, n_features=6, seed=0) -> Scenario:
     sc = _scenario(rates, rates, np.full((n_models, 1), NO_CHANGE), config)
     sc.drift_kind = np.full(n_models, "airlines-hourly", dtype=object)
     return sc
+
+
+FX_MODELS = ("mean", "hour profile", "HAR", "HAR + hour", "ridge lags", "EWMA 0.94", "EWMA 0.99", "EWMA × hour")
+
+
+def read_mt5_csv(path):
+    """Hourly close prices from a MetaTrader 5 export (tab-separated ``<DATE> <TIME> ... <CLOSE>``)."""
+    import pandas as pd
+
+    frame = pd.read_csv(path, sep="\t")
+    index = pd.to_datetime(frame["<DATE>"] + " " + frame["<TIME>"], format="%Y.%m.%d %H:%M:%S")
+    return pd.Series(frame["<CLOSE>"].to_numpy(dtype=float), index=index).sort_index()
+
+
+def fx_volatility_forecasts(abs_ret: np.ndarray, hour: np.ndarray, train: int, c: float = 1e-4) -> dict[str, np.ndarray]:
+    """Forecasts of next-hour absolute log return from the eight models of ``FX_MODELS``.
+
+    ``abs_ret[t]`` is forecast from data up to ``t - 1``. Static models (unconditional
+    mean, hour-of-day profile, HAR and ridge regressions on lags) are fitted once on
+    the first ``train`` hours; EWMA models adapt their level continuously, and
+    ``EWMA × hour`` applies the static hour profile to an adaptive level. Regressions
+    work on ``log(|r| + c)``.
+    """
+    from scipy.signal import lfilter
+
+    n = abs_ret.size
+    la = np.log(abs_ret + c)
+    past = np.concatenate([[abs_ret[:train].mean()], abs_ret[:-1]])  # |r| at t - 1
+    csum = np.concatenate([[0.0], np.cumsum(past)])
+
+    def trailing(w):  # mean of |r| over t - w .. t - 1
+        lo = np.maximum(np.arange(n) + 1 - w, 0)
+        return (csum[np.arange(n) + 1] - csum[lo]) / (np.arange(n) + 1 - lo)
+
+    profile = np.array([abs_ret[:train][hour[:train] == h].mean() for h in range(24)])
+    profile = np.where(np.isfinite(profile), profile, abs_ret[:train].mean())
+    dummies = (hour[:, None] == np.arange(1, 24)[None, :]).astype(float)
+    har = np.column_stack([np.ones(n)] + [np.log(trailing(w) + c) for w in (1, 24, 120)])
+    lags = np.column_stack([np.ones(n)] + [np.log(np.concatenate([np.full(j, abs_ret[:train].mean()), abs_ret[:-j]]) + c)
+                                          for j in range(1, 49)])
+
+    def regression(X, ridge=0.0):
+        A = X[:train].T @ X[:train] + ridge * np.eye(X.shape[1])
+        beta = np.linalg.solve(A, X[:train].T @ la[:train])
+        return np.maximum(np.exp(X @ beta) - c, 0.0)
+
+    def ewma(x, lam):
+        y = lfilter([1 - lam], [1, -lam], x, zi=[lam * x[:train].mean()])[0]
+        return np.concatenate([[x[:train].mean()], y[:-1]])  # uses data up to t - 1
+
+    seasonal = profile[hour]
+    return {
+        "mean": np.full(n, abs_ret[:train].mean()),
+        "hour profile": seasonal,
+        "HAR": regression(har),
+        "HAR + hour": regression(np.hstack([har, dummies])),
+        "ridge lags": regression(np.hstack([lags, dummies]), ridge=10.0),
+        "EWMA 0.94": ewma(abs_ret, 0.94),
+        "EWMA 0.99": ewma(abs_ret, 0.99),
+        "EWMA × hour": ewma(abs_ret / seasonal, 0.97) * seasonal,
+    }
+
+
+def fx_scenario(paths, train_until: str = "2012-01-01", c: float = 1e-4) -> Scenario:
+    """A fleet of volatility models on hourly FX data, monitored by the daily mean loss.
+
+    Every file in ``paths`` (MetaTrader 5 hourly exports, see ``read_mt5_csv``) is one
+    currency pair; the pairs are aligned on common hours. For each pair the eight models
+    of ``FX_MODELS`` forecast the next-hour absolute log return, trained on the hours
+    before ``train_until``. The loss of a forecast is ``|log(|r| + c) - log(f + c)|``; a
+    step of the scenario is one trading day (22:00 to 22:00, days with fewer than 12
+    hours dropped; the mean hourly loss of that day), so the daily cycle of volatility
+    does not look like drift (experiment 16). There are no
+    drift labels: use ``with_material_null`` with ``forward_error`` of the loss.
+    Model names are stored in ``drift_kind`` as ``"PAIR/model"``.
+    """
+    import pandas as pd
+
+    from .preprocess import bucket_means
+
+    closes = pd.DataFrame({str(p).split("/")[-1][:6]: read_mt5_csv(p) for p in paths}).dropna()
+    abs_ret = np.abs(np.log(closes).diff().iloc[1:])
+    hour = abs_ret.index.hour.to_numpy()
+    train = int(np.sum(abs_ret.index < pd.Timestamp(train_until)))
+    losses, names = [], []
+    for pair in abs_ret.columns:
+        a = abs_ret[pair].to_numpy()
+        for name, f in fx_volatility_forecasts(a, hour, train, c).items():
+            losses.append(np.abs(np.log(a + c) - np.log(f + c)))
+            names.append(f"{pair}/{name}")
+    losses = np.array(losses)[:, train:]
+    # a trading day starts at 22:00 on the previous day (Sunday's open joins Monday); short days are dropped
+    session = (abs_ret.index[train:] + pd.Timedelta(hours=2)).normalize()
+    counts = session.value_counts()
+    keep = session.isin(counts.index[counts >= 12])
+    day = pd.factorize(session[keep])[0]
+    daily = bucket_means(losses[:, keep], day)
+    config = ScenarioConfig(n_streams=len(names), n_steps=daily.shape[1], phi=np.nan, rho=np.nan, drift_fraction=np.nan)
+    sc = _scenario(daily, daily, np.full((len(names), 1), NO_CHANGE), config)
+    sc.drift_kind = np.array(names, dtype=object)
+    return sc
