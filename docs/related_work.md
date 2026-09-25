@@ -3,7 +3,8 @@
 **English** · [Русский](related_work.ru.md)
 
 A draft section for the paper. Numbers in square brackets are sources from the literature review
-("Controlling false alarms in drift monitoring of systems with many ML models", in Russian),
+("Controlling false alarms in drift monitoring of systems with many ML models", in Russian;
+the full list is in [References](#references) at the end),
 which also contains a table matching the settings of the three lines of work. Here each line of
 work is followed by what the driftfdr experiments showed (experiment numbers refer to the
 [log](experiments.md)). Works outside the review are marked separately; their details must be
@@ -122,3 +123,54 @@ for a single MEWMA chart.
 - **NannyML's performance monitoring (with labels)** is compared directly in exp. 17: at a
   comparable false-alarm rate it catches degradations about as well; its ±3σ threshold is fixed
   and does not account for the number of models.
+
+## References
+
+Sources 1–25 are the reference list of the literature review, numbered as cited in the text.
+
+1. Gama J., Žliobaitė I., Bifet A., Pechenizkiy M., Bouchachia A. A survey on concept drift adaptation // ACM Computing Surveys. 2014. Vol. 46, No. 4. P. 1–37.
+2. Cerqueira V., Gomes H. M., Heyden M., Pfahringer B., Bifet A. A framework for evaluating and benchmarking concept drift detection methods // KDD ’26. 2026. arXiv:2606.07789.
+3. Page E. S. Continuous inspection schemes // Biometrika. 1954. Vol. 41, No. 1/2. P. 100–115.
+4. Gama J., Medas P., Castillo G., Rodrigues P. Learning with drift detection // Brazilian Symposium on Artificial Intelligence. Springer, 2004. P. 286–295.
+5. Bifet A., Gavaldà R. Learning from time-changing data with adaptive windowing // Proceedings of the 2007 SIAM International Conference on Data Mining. 2007. P. 443–448.
+6. dos Reis D. M., Flach P., Matwin S., Batista G. Fast unsupervised online drift detection using incremental Kolmogorov–Smirnov test // KDD ’16. 2016. P. 1545–1554.
+7. Montiel J. et al. River: machine learning for streaming data in Python // Journal of Machine Learning Research. 2021. Vol. 22, No. 110. P. 1–8.
+8. Bifet A. Classifier concept drift detection and the illusion of progress // International Conference on Artificial Intelligence and Soft Computing. Springer, 2017. P. 715–725.
+9. Rombouts J., Wilms I. Monitoring machine learning forecasts for platform data streams. 2024. arXiv:2401.09144.
+10. Hu Y. J., Rombouts J., Wilms I. MLOps monitoring at scale for digital platforms. 2025. arXiv:2504.16789.
+11. Mei Y. Efficient scalable schemes for monitoring a large number of data streams // Biometrika. 2010. Vol. 97, No. 2. P. 419–433.
+12. Chen J., Zhang W., Poor H. V. A false discovery rate oriented approach to parallel sequential change detection problems // IEEE Transactions on Signal Processing. 2020. Vol. 68. P. 1823–1836.
+13. Chen Y., Li X. Compound sequential change-point detection in parallel data streams // Statistica Sinica. 2023. Vol. 33, No. 1. P. 453–474.
+14. Dandapanthula S., Ramdas A. Multiple testing in multi-stream sequential change detection. 2025. arXiv:2501.04130.
+15. Benjamini Y., Hochberg Y. Controlling the false discovery rate: a practical and powerful approach to multiple testing // Journal of the Royal Statistical Society: Series B. 1995. Vol. 57, No. 1. P. 289–300.
+16. Foster D. P., Stine R. A. α-investing: a procedure for sequential control of expected false discoveries // Journal of the Royal Statistical Society: Series B. 2008. Vol. 70, No. 2. P. 429–444.
+17. Javanmard A., Montanari A. Online rules for control of false discovery rate and false discovery exceedance // Annals of Statistics. 2018. Vol. 46, No. 2. P. 526–554.
+18. Ramdas A., Yang F., Wainwright M. J., Jordan M. I. Online control of the false discovery rate with decaying memory // Advances in Neural Information Processing Systems (NeurIPS). 2017. Vol. 30.
+19. Ramdas A., Zrnic T., Wainwright M. J., Jordan M. I. SAFFRON: an adaptive algorithm for online control of the false discovery rate // Proceedings of the 35th International Conference on Machine Learning (ICML). 2018.
+20. Gang B., Sun W., Wang W. Structure-adaptive sequential testing for online false discovery rate control // Journal of the American Statistical Association. 2023. Vol. 118, No. 541. P. 732–745.
+21. Rebjock Q., Kurt B., Januschowski T., Callot L. Online false discovery rate control for anomaly detection in time series // Advances in Neural Information Processing Systems (NeurIPS). 2021. Vol. 34.
+22. Künsch H. R. The jackknife and the bootstrap for general stationary observations // Annals of Statistics. 1989. Vol. 17, No. 3. P. 1217–1241.
+23. Politis D. N., Romano J. P. The stationary bootstrap // Journal of the American Statistical Association. 1994. Vol. 89, No. 428. P. 1303–1313.
+24. Wu J., Apley D. W. Bootstrapped control limits for score-based concept drift control charts // Technometrics. 2026. arXiv:2507.16749.
+25. Souza V. M. A., Reis D. M., Maletzke A. G., Batista G. E. A. P. A. Challenges in benchmarking stream learning algorithms with real-world data // Data Mining and Knowledge Discovery. 2020. Vol. 34. P. 1805–1858.
+
+**Works outside the review** cited in this document and in the method description:
+
+- Podkopaev A., Ramdas A. Tracking the risk of a deployed model and detecting harmful distribution
+  shifts // ICLR. 2022.
+- Shin J., Ramdas A., Rinaldo A. E-detectors: a nonparametric framework for sequential change
+  detection. arXiv:2203.03532 (check the details of the published version).
+- Wang R., Ramdas A. False discovery rate control with e-values // Journal of the Royal Statistical
+  Society: Series B. 2022. Vol. 84, No. 3. P. 822–852.
+- Storey J. D., Taylor J. E., Siegmund D. Strong control, conservative point estimation and
+  simultaneous conservative consistency of false discovery rates: a unified approach // Journal of
+  the Royal Statistical Society: Series B. 2004. Vol. 66, No. 1. P. 187–205.
+- Zrnic T., Jiang D., Ramdas A., Jordan M. I. The power of batching in multiple hypothesis testing
+  // AISTATS. 2020.
+- Bühlmann P. Sieve bootstrap for time series // Bernoulli. 1997. Vol. 3, No. 2. P. 123–148.
+- Politis D. N., White H. Automatic block-length selection for the dependent bootstrap //
+  Econometric Reviews. 2004. Vol. 23, No. 1. P. 53–70.
+- Knijnenburg T. A., Wessels L. F. A., Reinders M. J. T., Shmulevich I. Fewer permutations, more
+  accurate P-values // Bioinformatics. 2009. Vol. 25, No. 12. P. i161–i168.
+- NannyML: confidence-based performance estimation (CBPE), NannyML documentation,
+  https://nannyml.readthedocs.io (there is no primary paper; the method is described in the documentation).
