@@ -170,6 +170,12 @@ python experiments/exp1_calibration.py --quick # any experiment; without --quick
 The experiments use fixed seeds and pinned settings, so they are reproducible; a full run of
 each takes from a few minutes to about an hour on 4 cores.
 
+### License
+
+Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright 2026 Artem Deviatov.
+The data sets are downloaded by the loaders and keep their own licenses; they are not part of
+this repository.
+
 ---
 
 ## Русский
@@ -339,3 +345,8 @@ python experiments/exp1_calibration.py --quick # любой эксперимен
 
 Эксперименты используют фиксированные сиды и закреплённые настройки, поэтому воспроизводятся;
 полный прогон каждого занимает от нескольких минут до часа на 4 ядрах.
+
+### Лицензия
+
+Apache License 2.0, см. [LICENSE](LICENSE) и [NOTICE](NOTICE). Copyright 2026 Artem Deviatov.
+Наборы данных скачиваются загрузчиками, остаются под своими лицензиями и в репозиторий не входят.
