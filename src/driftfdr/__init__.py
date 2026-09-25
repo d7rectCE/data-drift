@@ -1,7 +1,19 @@
 """Online FDR control on top of practical drift detectors for multi-model monitoring."""
 
 from .calibration import CalibrationConfig, NullDistribution, calibrate, calibrate_many
-from .detectors import ADWIN, DDM, Detector, KSSliding, KSWindow, MeanShift, PageHinkley, default_detectors
+from .detectors import (
+    ADWIN,
+    DDM,
+    ECUSUM,
+    Detector,
+    KSSliding,
+    KSWindow,
+    MeanShift,
+    PageHinkley,
+    Prewhitened,
+    ar_whiten,
+    default_detectors,
+)
 from .metrics import summarize
 from .monitor import MonitorConfig, MonitorResult, run_monitor
 from .online_fdr import (
@@ -25,6 +37,7 @@ from .streams import Scenario, ScenarioConfig, SupervisedConfig, benchmark_suite
 __all__ = [
     "ADWIN",
     "DDM",
+    "ECUSUM",
     "LOND",
     "SAFFRON",
     "AlphaInvesting",
@@ -43,6 +56,7 @@ __all__ = [
     "MonitorResult",
     "NullDistribution",
     "PageHinkley",
+    "Prewhitened",
     "RawThreshold",
     "Scenario",
     "ScenarioConfig",
@@ -59,6 +73,7 @@ __all__ = [
     "make_supervised_scenario",
     "run_monitor",
     "summarize",
+    "ar_whiten",
     "benchmark_suite",
     "bucket_means",
     "tolerance_from_cost",

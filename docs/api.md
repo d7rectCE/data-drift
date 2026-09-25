@@ -3,7 +3,7 @@
 Generated from the docstrings by `python docs/gen_api.py`; do not edit by hand.
 Everything listed under `driftfdr.__all__` can be imported from the top-level package.
 
-Top-level exports: `ADWIN`, `AlphaInvesting`, `BHWindow`, `BatchBH`, `BonferroniWindow`, `CalibratedDetector`, `CalibrationConfig`, `DDM`, `Detector`, `EBHWindow`, `KSSliding`, `KSWindow`, `LOND`, `LORDpp`, `MeanShift`, `MonitorConfig`, `MonitorResult`, `NullDistribution`, `PageHinkley`, `RawThreshold`, `SAFFRON`, `Scenario`, `ScenarioConfig`, `StoreyBHWindow`, `StreamingMonitor`, `SupervisedConfig`, `Uncorrected`, `benchmark_suite`, `bucket_means`, `calibrate`, `calibrate_many`, `default_detectors`, `from_river`, `make_procedure`, `make_scenario`, `make_supervised_scenario`, `run_monitor`, `split_common`, `summarize`, `tolerance_from_cost`.
+Top-level exports: `ADWIN`, `AlphaInvesting`, `BHWindow`, `BatchBH`, `BonferroniWindow`, `CalibratedDetector`, `CalibrationConfig`, `DDM`, `Detector`, `EBHWindow`, `ECUSUM`, `KSSliding`, `KSWindow`, `LOND`, `LORDpp`, `MeanShift`, `MonitorConfig`, `MonitorResult`, `NullDistribution`, `PageHinkley`, `Prewhitened`, `RawThreshold`, `SAFFRON`, `Scenario`, `ScenarioConfig`, `StoreyBHWindow`, `StreamingMonitor`, `SupervisedConfig`, `Uncorrected`, `ar_whiten`, `benchmark_suite`, `bucket_means`, `calibrate`, `calibrate_many`, `default_detectors`, `from_river`, `make_procedure`, `make_scenario`, `make_supervised_scenario`, `run_monitor`, `split_common`, `summarize`, `tolerance_from_cost`.
 
 ## Contents
 
@@ -38,7 +38,7 @@ what it does.
 ### `CalibratedDetector`
 
 ```python
-CalibratedDetector(detector: Detector, n_ref: int = 300, window: int = 100, horizon: int = 5, calibration: CalibrationConfig = CalibrationConfig(n_boot=2000, method='sieve_pu', block_length='auto', tail='gpd', tail_fraction=0.1, min_exceedances=10, seed=12345, tolerance=0.0), seed=None)
+CalibratedDetector(detector: Detector, n_ref: int = 300, window: int = 100, horizon: int = 5, calibration: CalibrationConfig = CalibrationConfig(n_boot=2000, method='sieve_pu', block_length='auto', tail='gpd', tail_fraction=0.1, min_exceedances=10, seed=12345, tolerance=0.0), seed=None, sequential: bool = False)
 ```
 
 One detector for one model: collects a reference, calibrates, then emits p-values.
@@ -48,6 +48,13 @@ window ends, and a p-value at the end of every window afterwards. The statistic
 looks back over up to ``horizon`` windows; one bootstrap pass calibrates all of
 them. ``reset()`` starts a new reference, e.g. after retraining.
 
+With ``sequential=True`` (detectors with ``start_stream``, such as ``ECUSUM``) the
+detector runs continuously from the end of the reference and ``update`` returns a
+p-value at every step: the p-value of the current score under the null of the
+largest score within a window. Alarming as soon as it drops below a level ``a``
+therefore keeps the probability of a false alarm within any window at ``a``, as in
+the windowed mode, without waiting for the window to end.
+
 - **`reset(seed=None)`** 
 
   Start collecting a new reference, e.g. right after retraining.
@@ -55,12 +62,13 @@ them. ``reset()`` starts a new reference, e.g. after retraining.
 - **`calibrated`** *(property)* — Whether the reference is complete and the null distributions are ready.
 - **`update(x: float) -> float | None`** 
 
-  Add one observation; returns a p-value at the end of each window after calibration.
+  Add one observation; returns a p-value at the end of each window after calibration
+  (at every step in sequential mode).
 
 ### `StreamingMonitor`
 
 ```python
-StreamingMonitor(n_models: int | None = None, detector_factory=None, procedure: Procedure | str = 'bonferroni', alpha: float = 0.05, n_ref: int = 300, window: int = 100, horizon: int = 5, calibration: CalibrationConfig = CalibrationConfig(n_boot=2000, method='sieve_pu', block_length='auto', tail='gpd', tail_fraction=0.1, min_exceedances=10, seed=12345, tolerance=0.0), seed: int = 0, model_ids=None, split_common: bool = False)
+StreamingMonitor(n_models: int | None = None, detector_factory=None, procedure: Procedure | str = 'bonferroni', alpha: float = 0.05, n_ref: int = 300, window: int = 100, horizon: int = 5, calibration: CalibrationConfig = CalibrationConfig(n_boot=2000, method='sieve_pu', block_length='auto', tail='gpd', tail_fraction=0.1, min_exceedances=10, seed=12345, tolerance=0.0), seed: int = 0, model_ids=None, split_common: bool = False, sequential: bool = False)
 ```
 
 One calibrated detector per model plus a rule that decides which models to retrain.
@@ -96,6 +104,13 @@ every model. A drift of the whole fleet is invisible in the residuals and is cau
 only this way; the median assumes fewer than half of the models drift at once. In
 this mode every monitored model must report at every step, and a retrained model
 re-estimates its standardisation from its new reference.
+
+``sequential=True`` (with a detector such as ``ECUSUM``) removes the wait for the end
+of a window: every model is checked at every step, at level ``alpha / K`` against
+the null of the largest score within a window, so the probability of a false alarm
+in any window stays at most ``alpha`` across the fleet (a Bonferroni rule; the
+``procedure`` argument is not used). ``window`` then only sets the time unit of
+that error budget.
 
 After every ``update``, ``last_pvalues`` holds the p-values that became ready in that
 call, keyed by model id (and ``StreamingMonitor.FLEET`` for the common component).
@@ -325,6 +340,91 @@ a fixed rise of 0.1 in signal units.
   reference and run over the windows; column ``i`` of the result is the
   maximum score reached inside window ``i``, shape ``(n_series, n)``.
 
+### `ar_whiten`
+
+```python
+ar_whiten(x: np.ndarray, n_ref: int, order: int = 2) -> np.ndarray
+```
+
+Standardised innovations of an AR(``order``) model fitted to each row's reference.
+
+For every row the mean, the Yule–Walker AR coefficients and the innovation
+standard deviation are estimated on the first ``n_ref`` steps only; the whole
+row (reference included) is then filtered: ``e_t = d_t - sum_i a_i d_{t-i}``
+with ``d = x - mean``, divided by the reference innovation sd. Under the null
+the output is close to white noise with unit variance, so a detector that
+assumes independent observations accumulates evidence at the right rate.
+
+### `Prewhitened` (Detector)
+
+```python
+Prewhitened(detector: Detector, order: int = 2)
+```
+
+Another detector run on AR-whitened, standardised values (see ``ar_whiten``).
+
+Detectors such as Page-Hinkley treat consecutive observations as independent;
+on an autocorrelated error series calibration fixes their false-alarm rate but
+not the rate at which they accumulate evidence. The AR model is fitted on each
+reference (and on each bootstrap reference during calibration), so the p-values
+stay valid. Not for detectors of 0/1 errors (DDM).
+
+- **`default_threshold`** *(property)* — The inner detector's threshold (in units of the standardised innovations).
+- **`window_statistics(x: np.ndarray, n_ref: int, window: int) -> np.ndarray`** 
+
+  Test statistics for "data after the reference differ from it".
+
+  ``x`` holds the reference in its first ``n_ref`` columns followed by
+  ``n`` windows of ``window`` steps. The detector is warmed up on the
+  reference and run over the windows; column ``i`` of the result is the
+  maximum score reached inside window ``i``, shape ``(n_series, n)``.
+
+### `ECUSUM` (Detector)
+
+```python
+ECUSUM(order: int = 2, lambdas=(0.25, 0.5, 1.0))
+```
+
+A sequential e-detector for a rise in the mean, in CUSUM form.
+
+On the AR-whitened, standardised innovations ``z_t`` (``ar_whiten``), each
+``lambda`` in ``lambdas`` gives per-step e-values ``exp(lambda z_t - lambda^2 / 2)``
+and the CUSUM e-detector ``C_t = max(0, C_{t-1} + lambda z_t - lambda^2 / 2)`` (in
+logs); the score is the log of their average, ``log mean_k exp(C_t^(k))``, which
+covers shifts of unknown size (Shin, Ramdas & Rinaldo, 2023; multi-stream use as
+in Dandapanthula & Ramdas). The CUSUM starts at zero right after the reference.
+
+With exactly Gaussian white innovations an alarm at ``score >= log A`` would have
+an average run length of at least ``A`` under the null (``default_threshold`` uses
+``A = 100``). Real innovations are not exactly Gaussian and the AR model is
+estimated, so driftfdr calibrates the threshold by bootstrap like any other
+statistic. Unlike the window tests, it can be checked at every step: see
+``CalibratedDetector(sequential=True)``.
+
+- **`default_threshold`** *(property)* — Score threshold equivalent to the river default hyperparameters.
+- **`start_stream(reference) -> ECUSUMState`** 
+
+  Incremental state after ``reference``: ``state.update(x)`` returns the score at each new step.
+
+- **`load_stream(data: dict) -> ECUSUMState`** 
+
+  Restore a state saved with ``ECUSUMState.to_dict``.
+
+### `ECUSUMState`
+
+```python
+ECUSUMState(mu, coef, sd, lags, lambdas, cusums)
+```
+
+Running state of an ``ECUSUM`` after its reference; plain floats, so updates are cheap.
+
+- **`update(x: float) -> float`** 
+
+  Add one observation; return the current score (log of the mixture e-detector).
+
+- **`to_dict() -> dict`** 
+- **`from_dict(data: dict) -> ECUSUMState`** *(classmethod)* 
+
 ### `ks_statistic`
 
 ```python
@@ -414,6 +514,10 @@ Bootstrap null distribution of a window statistic, with an optional fitted upper
 
   ``(1 + #{T* >= T}) / (B + 1)``, replaced by the tail model when fewer than
   ``min_exceedances`` bootstrap statistics reach ``T``.
+
+- **`pvalue_scalar(statistic: float) -> float`** 
+
+  ``pvalue`` for a single statistic without numpy overhead (for per-step use).
 
 ### `fit_tail`
 

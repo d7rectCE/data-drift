@@ -161,3 +161,42 @@ def test_split_common_requires_every_model_and_survives_save(tmp_path):
     out_loaded = _feed(loaded, x, 450, 900, ids)
     assert out_loaded == _feed(straight2, x, 450, 900, ids)
     assert loaded.n_seen == straight2.n_seen and loaded._scale == straight2._scale
+
+
+def test_whitening_removes_autocorrelation_and_rejects_binary_detectors():
+    from driftfdr import DDM, Prewhitened, ar_whiten
+
+    sc = make_scenario(ScenarioConfig(n_streams=5, n_steps=3000, phi=0.7, drift_fraction=0.0), seed=6)
+    z = ar_whiten(sc.values, 300)[:, 300:]
+    lag1 = np.mean([np.corrcoef(row[:-1], row[1:])[0, 1] for row in z])
+    assert abs(lag1) < 0.08 and abs(z.std() - 1) < 0.15
+    with pytest.raises(ValueError):
+        Prewhitened(DDM())
+
+
+def test_ecusum_stream_matches_batch_scores():
+    from driftfdr import ECUSUM
+
+    x = np.random.default_rng(7).normal(size=(1, 900)).cumsum(axis=1) * 0.05 + np.random.default_rng(8).normal(size=(1, 900))
+    det = ECUSUM()
+    state = det.start_stream(x[0, :300])
+    stream = [state.update(v) for v in x[0, 300:]]
+    np.testing.assert_allclose(stream, det._window_scores(x, 300)[0], atol=1e-10)
+
+
+def test_sequential_monitor_alarms_between_window_ends_and_survives_save(tmp_path):
+    from driftfdr import ECUSUM
+
+    sc = make_scenario(ScenarioConfig(n_streams=6, n_steps=900, phi=0.3, drift_fraction=0.5, magnitude=2.0,
+                                      fixed_onset=520), seed=9)
+    kw = dict(alpha=0.05, n_ref=200, window=100, horizon=3, calibration=CAL, seed=3, sequential=True)
+    mon = StreamingMonitor(6, ECUSUM, **kw)
+    alarms = _feed(mon, sc.values, 0, 900)
+    assert len(mon.last_pvalues) == 6  # a p-value for every model at every step
+    drift_alarms = [t for k, t in alarms if k in sc.drifting and t > 520]
+    assert drift_alarms and any((t + 1) % 100 for t in drift_alarms)  # not only at window ends
+    first = StreamingMonitor(6, ECUSUM, **kw)
+    part = _feed(first, sc.values, 0, 450)
+    first.save(tmp_path / "seq.npz")
+    loaded = StreamingMonitor.load(tmp_path / "seq.npz", detector_factory=ECUSUM)
+    assert part + _feed(loaded, sc.values, 450, 900) == alarms

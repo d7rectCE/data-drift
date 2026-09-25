@@ -23,6 +23,7 @@ prefixes.
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -324,6 +325,169 @@ class MeanShift(Detector):
 
     def __repr__(self) -> str:
         return f"MeanShift(persistence={self.persistence})"
+
+
+def ar_whiten(x: np.ndarray, n_ref: int, order: int = 2) -> np.ndarray:
+    """Standardised innovations of an AR(``order``) model fitted to each row's reference.
+
+    For every row the mean, the Yule–Walker AR coefficients and the innovation
+    standard deviation are estimated on the first ``n_ref`` steps only; the whole
+    row (reference included) is then filtered: ``e_t = d_t - sum_i a_i d_{t-i}``
+    with ``d = x - mean``, divided by the reference innovation sd. Under the null
+    the output is close to white noise with unit variance, so a detector that
+    assumes independent observations accumulates evidence at the right rate.
+    """
+    x = np.atleast_2d(np.asarray(x, dtype=float))
+    d = x - x[:, :n_ref].mean(axis=1, keepdims=True)
+    ref = d[:, :n_ref]
+    p = max(0, min(order, n_ref // 4))
+    gamma = np.stack([(ref[:, k:] * ref[:, : n_ref - k]).sum(axis=1) / n_ref for k in range(p + 1)], axis=1)
+    e = d.copy()
+    if p > 0:
+        idx = np.abs(np.arange(p)[:, None] - np.arange(p)[None, :])
+        R = gamma[:, idx] + 1e-12 * np.eye(p)
+        a = np.linalg.solve(R, gamma[:, 1 : p + 1, None])[:, :, 0]
+        a = np.where(gamma[:, :1] > 0, a, 0.0)
+        for i in range(1, p + 1):
+            e[:, i:] -= a[:, i - 1 : i] * d[:, :-i]
+    sd = e[:, p:n_ref].std(axis=1, keepdims=True)
+    return e / np.where(sd > 0, sd, 1.0)
+
+
+class Prewhitened(Detector):
+    """Another detector run on AR-whitened, standardised values (see ``ar_whiten``).
+
+    Detectors such as Page-Hinkley treat consecutive observations as independent;
+    on an autocorrelated error series calibration fixes their false-alarm rate but
+    not the rate at which they accumulate evidence. The AR model is fitted on each
+    reference (and on each bootstrap reference during calibration), so the p-values
+    stay valid. Not for detectors of 0/1 errors (DDM).
+    """
+
+    def __init__(self, detector: Detector, order: int = 2):
+        if detector.input_kind == "errors":
+            raise ValueError(f"{detector.name} needs 0/1 errors and cannot run on whitened values")
+        self.detector = detector
+        self.order = order
+        self.name = f"{detector.name}+AR"
+
+    @property
+    def default_threshold(self) -> float:
+        """The inner detector's threshold (in units of the standardised innovations)."""
+        return self.detector.default_threshold
+
+    def window_statistics(self, x: np.ndarray, n_ref: int, window: int) -> np.ndarray:
+        return self.detector.window_statistics(ar_whiten(x, n_ref, self.order), n_ref, window)
+
+    def __repr__(self) -> str:
+        return f"Prewhitened({self.detector!r}, order={self.order})"
+
+
+class ECUSUM(Detector):
+    """A sequential e-detector for a rise in the mean, in CUSUM form.
+
+    On the AR-whitened, standardised innovations ``z_t`` (``ar_whiten``), each
+    ``lambda`` in ``lambdas`` gives per-step e-values ``exp(lambda z_t - lambda^2 / 2)``
+    and the CUSUM e-detector ``C_t = max(0, C_{t-1} + lambda z_t - lambda^2 / 2)`` (in
+    logs); the score is the log of their average, ``log mean_k exp(C_t^(k))``, which
+    covers shifts of unknown size (Shin, Ramdas & Rinaldo, 2023; multi-stream use as
+    in Dandapanthula & Ramdas). The CUSUM starts at zero right after the reference.
+
+    With exactly Gaussian white innovations an alarm at ``score >= log A`` would have
+    an average run length of at least ``A`` under the null (``default_threshold`` uses
+    ``A = 100``). Real innovations are not exactly Gaussian and the AR model is
+    estimated, so driftfdr calibrates the threshold by bootstrap like any other
+    statistic. Unlike the window tests, it can be checked at every step: see
+    ``CalibratedDetector(sequential=True)``.
+    """
+
+    name = "e-CUSUM"
+
+    def __init__(self, order: int = 2, lambdas=(0.25, 0.5, 1.0)):
+        self.order = order
+        self.lambdas = tuple(float(v) for v in lambdas)
+
+    @property
+    def default_threshold(self) -> float:
+        return float(np.log(100.0))
+
+    def _window_scores(self, x: np.ndarray, n_ref: int) -> np.ndarray:
+        z = ar_whiten(x, n_ref, self.order)[:, n_ref:]
+        logs = []
+        for lam in self.lambdas:
+            walk = np.cumsum(lam * z - lam * lam / 2.0, axis=1)
+            low = np.minimum(np.minimum.accumulate(walk, axis=1), 0.0)
+            logs.append(walk - low)
+        stacked = np.stack(logs)
+        top = stacked.max(axis=0)
+        return top + np.log(np.exp(stacked - top).mean(axis=0))
+
+    def start_stream(self, reference) -> "ECUSUMState":
+        """Incremental state after ``reference``: ``state.update(x)`` returns the score at each new step."""
+        ref = np.asarray(reference, dtype=float)
+        n_ref = ref.size
+        mu = ref.mean()
+        d = ref - mu
+        p = max(0, min(self.order, n_ref // 4))
+        gamma = np.array([(d[k:] * d[: n_ref - k]).sum() / n_ref for k in range(p + 1)])
+        a = np.zeros(p)
+        if p > 0 and gamma[0] > 0:
+            idx = np.abs(np.arange(p)[:, None] - np.arange(p)[None, :])
+            a = np.linalg.solve(gamma[idx] + 1e-12 * np.eye(p), gamma[1 : p + 1])
+        e = d.copy()
+        for i in range(1, p + 1):
+            e[i:] -= a[i - 1] * d[:-i]
+        sd = e[p:].std()
+        return ECUSUMState(mu=float(mu), coef=[float(v) for v in a], sd=float(sd) if sd > 0 else 1.0,
+                           lags=[float(v) for v in d[::-1][:p]], lambdas=list(self.lambdas),
+                           cusums=[0.0] * len(self.lambdas))
+
+    def load_stream(self, data: dict) -> "ECUSUMState":
+        """Restore a state saved with ``ECUSUMState.to_dict``."""
+        return ECUSUMState.from_dict(data)
+
+    def __repr__(self) -> str:
+        return f"ECUSUM(order={self.order}, lambdas={self.lambdas})"
+
+
+class ECUSUMState:
+    """Running state of an ``ECUSUM`` after its reference; plain floats, so updates are cheap."""
+
+    __slots__ = ("mu", "coef", "sd", "lags", "lambdas", "cusums")
+
+    def __init__(self, mu, coef, sd, lags, lambdas, cusums):
+        self.mu, self.coef, self.sd = mu, coef, sd
+        self.lags, self.lambdas, self.cusums = lags, lambdas, cusums
+
+    def update(self, x: float) -> float:
+        """Add one observation; return the current score (log of the mixture e-detector)."""
+        d = x - self.mu
+        e = d
+        lags = self.lags
+        for a, prev in zip(self.coef, lags):
+            e -= a * prev
+        if lags:
+            lags.insert(0, d)
+            lags.pop()
+        z = e / self.sd
+        cusums, top, total = self.cusums, 0.0, 0.0
+        for k, lam in enumerate(self.lambdas):
+            c = cusums[k] + lam * z - 0.5 * lam * lam
+            if c < 0.0:
+                c = 0.0
+            cusums[k] = c
+            if c > top:
+                top = c
+        for c in cusums:
+            total += math.exp(c - top)
+        return top + math.log(total / len(cusums))
+
+    def to_dict(self) -> dict:
+        return {k: getattr(self, k) for k in self.__slots__}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ECUSUMState":
+        return cls(**data)
 
 
 def ks_statistic(a: np.ndarray, b: np.ndarray) -> np.ndarray:

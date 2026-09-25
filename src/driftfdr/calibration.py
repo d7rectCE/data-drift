@@ -20,6 +20,8 @@ probability-weighted moments is available as ``tail="gpd"``.
 
 from __future__ import annotations
 
+import bisect
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -99,6 +101,23 @@ class NullDistribution:
             if use.any():
                 p[use] = self._tail_sf(stat[use])
         return p
+
+    def pvalue_scalar(self, statistic: float) -> float:
+        """``pvalue`` for a single statistic without numpy overhead (for per-step use)."""
+        samples = self.__dict__.get("_sample_list")
+        if samples is None:
+            samples = self.__dict__["_sample_list"] = self.samples.tolist()
+        B = len(samples)
+        count = B - bisect.bisect_left(samples, statistic)
+        if count < self.min_exceedances and math.isfinite(self.tail_scale) and statistic > self.tail_threshold:
+            y = (statistic - self.tail_threshold) / self.tail_scale
+            if self.tail_shape > 1e-12:
+                base = 1.0 + self.tail_shape * y
+                sf = base ** (-1.0 / self.tail_shape) if base > 0 else 0.0
+            else:
+                sf = math.exp(-y) if y < 700 else 0.0
+            return min(1.0, max(P_FLOOR, self.tail_prob * sf))
+        return (1.0 + count) / (B + 1.0)
 
     def _tail_sf(self, stat: np.ndarray) -> np.ndarray:
         y = (stat - self.tail_threshold) / self.tail_scale
