@@ -18,6 +18,8 @@ detector would have fired":
 | KS | Kolmogorov–Smirnov statistic, reference segment vs. the new data | critical value at α = 0.05 |
 | Sliding KS (`KSSliding`, in the spirit of IKS) | largest KS distance between the reference and a sliding window of the latest observations | — |
 | MeanShift(m) | minimum over the last m windows of the excess of the window mean over the reference mean (in signal units) | a rise of 0.1 |
+| `Prewhitened(d)` | the score of detector d on AR-whitened, standardised values | that of d |
+| e-CUSUM (`ECUSUM`) | log of the average of CUSUM e-detectors `max(0, C + λz − λ²/2)` over λ ∈ {0.25, 0.5, 1} on whitened innovations z | log 100 |
 
 MeanShift is not from river: it is the simplest test of a shift in the mean error (with m = 1,
 the test of Rombouts & Wilms), and with m > 1 it requires persistence (the degradation lasts m
@@ -30,6 +32,17 @@ grid of split points instead of the exponential histogram; river checks for cuts
 `clock = 32` steps, so the alarm differs from river's by a few dozen steps (in the tests, from 64
 steps earlier to 32 steps later). All scores are vectorised over the first axis, so thousands of
 bootstrap replicates are processed in one call.
+
+**Whitening.** `ar_whiten` fits an AR model (Yule–Walker, order 2 by default) and the mean on
+each reference, filters the whole series and divides by the reference innovation sd; under the
+null the result is close to white noise with unit variance. `Prewhitened` runs any value detector
+on it. During calibration the AR model is refitted on every bootstrap reference, so the p-values
+stay valid. **e-CUSUM** works on the whitened innovations and is an e-detector in the sense of
+Shin, Ramdas & Rinaldo: with exactly Gaussian white innovations, alarming at `score ≥ log A`
+would give an average run length of at least A under the null. Real innovations are not exactly
+Gaussian and the AR model is estimated, so its threshold is calibrated by bootstrap like any
+other statistic. It also has an incremental form (`ECUSUM.start_stream`), so it can be checked at
+every step.
 
 Why not work with the binary signal directly: a black box with one threshold gives a p-value
 with two values `{q, 1}`, where q is the probability of an alarm under the null. Online FDR
@@ -45,6 +58,18 @@ window. The horizon lets evidence accumulate, as in a detector running continuou
 production; without it online FDR finds almost nothing (see [the experiments](experiments.md#what-stage-1-showed)).
 After an alarm the stream is retrained, a new reference is collected over the next `n_ref`
 steps, and the stream is not monitored meanwhile.
+
+**Sequential mode** (`StreamingMonitor(sequential=True)`, detectors with `start_stream`, i.e.
+`ECUSUM`). The detector runs continuously from the end of the reference, and at every step its
+current score is compared with the null distribution of the *largest score within a window*
+(the same bootstrap as in the windowed mode). Alarming as soon as the p-value drops to α/K keeps
+the probability of a false alarm in any window at α/K per model and α across the fleet — the
+Bonferroni budget of the windowed mode — but without waiting for the window to end; the window
+only sets the time unit of the budget. BH and online rules are not used in this mode.
+
+**Streaming implementation.** When several models finish a window at the same step, their
+window statistics are computed in one vectorised call per group of equal detectors;
+`NullDistribution.pvalue_scalar` gives per-step p-values without numpy overhead.
 
 The null hypothesis is defined by regimes: a test is null if the stream's mean is constant over
 the whole span from the start of the reference to the end of the window. This is a synthetic

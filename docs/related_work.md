@@ -70,6 +70,13 @@ and introduced the error over patience (EOP).
   least one false alarm in a window (Bonferroni within a window, exp. 13) — is an error per unit
   of time rather than over the whole run, and in spirit is close to EOP: it does not degenerate as
   monitoring goes on. A formal comparison with EOP is an open question for the paper.
+- **e-detectors in driftfdr.** `ECUSUM` is a mixture CUSUM e-detector (Shin, Ramdas & Rinaldo)
+  on AR-whitened innovations, and `StreamingMonitor(sequential=True)` checks it at every step
+  with a Bonferroni-type rule across models, in the spirit of the e-d-Bonferroni procedure of
+  [14]. Two differences: the threshold is calibrated by bootstrap to a false-alarm budget per
+  window instead of being derived from the e-values (the innovations are not exactly Gaussian and
+  the AR model is estimated), and the guarantee is the per-window probability of a false alarm
+  rather than EOP. Experiment 23 compares it with the windowed detectors.
 - The share of false alarms over the whole run (`fdp`) is closer to the setting of
   Chen–Zhang–Poor [12]. BH within a window does not control it with correlated models (exp. 13).
 
